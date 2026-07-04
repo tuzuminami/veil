@@ -1,66 +1,161 @@
 # VEIL
 
-> 対話AIの境界・同意・年齢・危険信号をfail-closedで判定するポリシー層
+VEIL is a local-first policy decision point for conversational AI systems. It evaluates versioned policy bundles before a product accepts input, returns model output, or starts a tool action.
 
-## 概要
-入力・出力・ツール実行前に、適用ポリシーとコンテキストから許可、修正、確認要求、拒否、エスカレーションを返すOSSポリシーエンジン。
+The default posture is fail-closed: unknown policy state, missing authorization, malformed rules, adapter timeout, or ambiguous classifier output cannot silently become `ALLOW`.
 
-## このパッケージの位置付け
-本ZIPは、`veil` を単独OSSリポジトリとして着手するための**要求定義・設計・検証・実装バックログ**一式です。
-商用利用・セルフホスト・クラウド提供を阻害しないことを前提に、ライセンスはApache-2.0を採用します。
+## What It Does
 
-## 想定利用者
-AIアプリの安全設計者、プロダクトマネージャー、コンプライアンス、モデレーション、プラットフォーム運用者。
+- Creates and validates declarative policy bundles.
+- Publishes immutable policy versions.
+- Returns `ALLOW`, `TRANSFORM`, `REQUIRE_CONFIRMATION`, `BLOCK`, or `ESCALATE`.
+- Stores audit evidence with policy version, matched rule, input hash, evidence hash, actor, tenant, and correlation ID.
+- Enforces development auth scopes, tenant isolation, idempotency, and stable error envelopes.
+- Provides OpenAPI 3.1, JSON Schemas, a small JavaScript SDK, and a public private-boundary guard.
 
-## 解決する範囲
-- `Policy Decision Point for Conversational AI`
-- マルチテナント、監査、Plugin拡張、外部LLM／ローカルLLMとの疎結合を前提にする
-- AI恋愛・コンパニオン用途に限らず、ゲーム、教育、顧客接点、業務AIへ転用可能とする
+## Non-Goals
 
-## 非対象
-- 本人の年齢や本人性を単独で証明しない。
-- 法的助言・法令適合の保証をしない。
-- 安全基準を暗黙に緩和しない。
+- VEIL is not a chat UI, identity provider, billing system, legal certification, or general moderation dashboard.
+- VEIL does not prove a user's age or identity by itself.
+- VEIL does not call external LLMs in the core path.
 
-## ドキュメント索引
-| ファイル | 内容 |
-|---|---|
-| `AGENTS.md` | 実装担当AI・人間開発者向けの不変ルール |
-| `docs/00_GLOSSARY.md` | 用語・境界定義 |
-| `docs/01_BMA.md` | 事業・ミッション分析（15288） |
-| `docs/02_StRS.md` | ステークホルダー要求（29148） |
-| `docs/03_SyRS.md` | システム要求（29148 / 25010） |
-| `docs/04_AD.md` | アーキテクチャ記述（42010） |
-| `docs/05_DD.md` | 設計記述（12207） |
-| `docs/06_API_CONTRACT.md` | HTTP API・イベント・Plugin契約 |
-| `docs/07_VV_PLAN.md` | 検証・妥当性確認計画 |
-| `docs/08_TRACEABILITY.md` | 要求→設計→テストのトレース |
-| `docs/09_MVP_BACKLOG.md` | GitHub Issue化可能なMVPバックログ |
-| `docs/10_RELEASE_CRITERIA.md` | v0.1.0公開判定基準 |
+## Quick Start
 
-## 推奨初期技術基盤
-- TypeScript（strict） / Node.js LTS / pnpm
-- Fastify または同等の高速HTTPフレームワーク
-- PostgreSQL（`veil`の主要状態を永続化）
-- OpenAPI 3.1、JSON Schema、Docker Compose
-- Vitest、Testcontainers、ESLint、Prettier、GitHub Actions
-- 監査・運用メトリクスはOpenTelemetry互換のtrace IDを前提とする
-
-## 初期リポジトリ構造
-```text
-veil/
-├── apps/api/             # HTTP API
-├── packages/core/        # ドメイン・ユースケース
-├── packages/contracts/   # JSON Schema / OpenAPI / DTO
-├── packages/plugins/     # Plugin SPIと標準実装
-├── packages/sdk-ts/      # TypeScript SDK
-├── tests/                # unit / integration / contract / e2e
-├── docs/                 # 本パッケージのドキュメント
-├── AGENTS.md
-└── docker-compose.yml
+```bash
+pnpm run verify
+node src/server.js
 ```
 
-## リリース名
-- Repository: `veil`
-- Display name: `VEIL`
-- 初期目標: `v0.1.0`（MVP、API互換性は試験段階）
+The development auth adapter accepts bearer tokens in this format:
+
+```text
+Authorization: Bearer dev:<tenant-id>:<actor-id>:<comma-separated-scopes>
+X-Tenant-Id: <tenant-id>
+```
+
+Example scopes:
+
+```text
+policy:write,policy:read,decision:write,decision:read,appeal:write
+```
+
+## Example Flow
+
+Create a policy:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/policies \
+  -H 'Authorization: Bearer dev:tenant-a:alice:policy:write,policy:read,decision:write,decision:read,appeal:write' \
+  -H 'X-Tenant-Id: tenant-a' \
+  -H 'X-Correlation-Id: corr-demo' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "policyId": "baseline",
+    "bundle": {
+      "name": "baseline",
+      "version": "1.0.0",
+      "defaultAction": "BLOCK",
+      "rules": [
+        {
+          "id": "allow-low-risk",
+          "priority": 10,
+          "effect": "ALLOW",
+          "match": { "field": "risk", "operator": "equals", "value": "low" },
+          "reasonCode": "LOW_RISK_ALLOWED"
+        },
+        {
+          "id": "age-unmet",
+          "priority": 0,
+          "effect": "REQUIRE_CONFIRMATION",
+          "match": { "field": "ageAssurance.status", "operator": "equals", "value": "unmet" },
+          "reasonCode": "AGE_ASSURANCE_REQUIRED"
+        }
+      ]
+    }
+  }'
+```
+
+Publish it:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/policies/baseline/publish \
+  -H 'Authorization: Bearer dev:tenant-a:alice:policy:write,decision:write,decision:read' \
+  -H 'X-Tenant-Id: tenant-a' \
+  -H 'Idempotency-Key: publish-baseline-1' \
+  -H 'Content-Type: application/json' \
+  -d '{ "version": "1.0.0" }'
+```
+
+Create a decision:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/decisions \
+  -H 'Authorization: Bearer dev:tenant-a:alice:decision:write,decision:read' \
+  -H 'X-Tenant-Id: tenant-a' \
+  -H 'Idempotency-Key: decision-1' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "request": {
+      "policyId": "baseline",
+      "version": "1.0.0",
+      "input": { "risk": "low" }
+    }
+  }'
+```
+
+An adapter timeout or unknown result returns a safe result, not `ALLOW`:
+
+```json
+{
+  "request": {
+    "policyId": "baseline",
+    "version": "1.0.0",
+    "input": { "risk": "low" },
+    "adapterResult": { "status": "timeout", "source": "classifier" }
+  }
+}
+```
+
+## Repository Layout
+
+```text
+src/core/           domain validation, canonicalization, and decision logic
+src/application/    use cases, idempotency, audit, and outbox orchestration
+src/adapters/       local persistence adapter
+src/transport/      HTTP transport and error envelope
+src/plugins/        public plugin manifest compatibility helpers
+src/sdk/            small JavaScript client
+openapi/            OpenAPI 3.1 contract
+schemas/            JSON Schema contracts
+migrations/         PostgreSQL schema for production adapters
+tests/              public synthetic tests
+scripts/            quality and private-boundary checks
+```
+
+## Commands
+
+```bash
+pnpm run build
+pnpm run test
+pnpm run check:private-boundary
+pnpm run verify
+```
+
+`docker compose up` starts PostgreSQL for production-adapter work. The current MVP uses a local file-backed adapter so the core flow remains dependency-light and deterministic during development.
+
+## Security Notes
+
+- Do not use the development bearer token adapter in production.
+- Store secrets through a separate secret manager or adapter. Do not place raw secrets in policy bundles, fixtures, logs, or exports.
+- Tenant ID in a header is requested context, not proof of authorization.
+- Audit records store hashes and metadata instead of raw conversational content.
+
+## Known Limitations
+
+- PostgreSQL persistence is defined by migration and ready for adapter implementation, while the current runnable MVP uses the file-backed adapter.
+- The plugin host is represented by a public manifest compatibility helper; dynamic plugin loading is intentionally out of scope for this first slice.
+- OpenAPI is authored directly and should be generated from a single source of truth in a later release.
+
+## License
+
+Apache-2.0. See [LICENSE.md](./LICENSE.md).

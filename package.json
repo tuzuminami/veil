@@ -1,0 +1,28 @@
+{
+  "name": "@tuzuminami/veil",
+  "version": "0.1.0",
+  "description": "Fail-closed conversational AI policy decision point.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src",
+    "openapi",
+    "schemas",
+    "migrations",
+    "docs/adr",
+    "docs/runbooks",
+    "README.md",
+    "LICENSE.md",
+    "SECURITY.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build-check.mjs",
+    "test": "node --test \"tests/**/*.test.js\"",
+    "check:private-boundary": "node scripts/check-private-boundary.mjs",
+    "verify": "pnpm run build && pnpm run test && pnpm run check:private-boundary"
+  }
+}

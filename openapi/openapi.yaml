@@ -1,0 +1,232 @@
+openapi: 3.1.0
+info:
+  title: VEIL API
+  version: 0.1.0
+  license:
+    name: Apache-2.0
+paths:
+  /health:
+    get:
+      responses:
+        "200":
+          description: Health status
+  /ready:
+    get:
+      responses:
+        "200":
+          description: Readiness status
+  /v1/policies:
+    post:
+      summary: Create a draft policy bundle version.
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [policyId, bundle]
+              properties:
+                policyId:
+                  type: string
+                bundle:
+                  $ref: "#/components/schemas/PolicyBundleDraft"
+      responses:
+        "201":
+          description: Draft policy version
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /v1/policy-bundles/{policyId}/versions/{version}/validate:
+    post:
+      summary: Validate a draft policy bundle.
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - name: policyId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Validation result
+  /v1/policies/{policyId}/publish:
+    post:
+      summary: Publish an immutable policy version.
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: policyId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version:
+                  type: string
+      responses:
+        "200":
+          description: Published policy version
+  /v1/decisions:
+    post:
+      summary: Evaluate a conversational policy decision.
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request]
+              properties:
+                request:
+                  $ref: "#/components/schemas/DecisionRequest"
+      responses:
+        "201":
+          description: Policy decision
+  /v1/decisions/{decisionId}:
+    get:
+      summary: Retrieve decision evidence.
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - name: decisionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Decision evidence
+  /v1/appeals:
+    post:
+      summary: Create an appeal linked to a prior decision.
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CorrelationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request]
+              properties:
+                request:
+                  $ref: "#/components/schemas/AppealRequest"
+      responses:
+        "201":
+          description: Appeal record
+components:
+  parameters:
+    TenantId:
+      name: X-Tenant-Id
+      in: header
+      required: true
+      schema:
+        type: string
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      schema:
+        type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: Stable error envelope
+  schemas:
+    PolicyBundleDraft:
+      type: object
+      required: [name, version, defaultAction, rules]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        defaultAction:
+          enum: [BLOCK, ESCALATE]
+        rules:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PolicyRule"
+    PolicyRule:
+      type: object
+      required: [id, priority, effect, match, reasonCode]
+      properties:
+        id:
+          type: string
+        priority:
+          type: integer
+          minimum: 0
+        effect:
+          enum: [ALLOW, TRANSFORM, REQUIRE_CONFIRMATION, BLOCK, ESCALATE]
+        match:
+          type: object
+          required: [field, operator]
+          properties:
+            field:
+              type: string
+            operator:
+              enum: [equals, contains, absent]
+            value:
+              type: string
+        reasonCode:
+          type: string
+        obligations:
+          type: array
+          items:
+            type: string
+    DecisionRequest:
+      type: object
+      required: [policyId, version, input]
+      properties:
+        policyId:
+          type: string
+        version:
+          type: string
+        input:
+          type: object
+        adapterResult:
+          type: object
+          properties:
+            status:
+              enum: [ok, unknown, timeout]
+            source:
+              type: string
+            result:
+              enum: [ALLOW, TRANSFORM, REQUIRE_CONFIRMATION, BLOCK, ESCALATE]
+    AppealRequest:
+      type: object
+      required: [decisionId]
+      properties:
+        decisionId:
+          type: string
+        reason:
+          type: string
