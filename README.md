@@ -141,7 +141,7 @@ pnpm run check:private-boundary
 pnpm run verify
 ```
 
-`docker compose up` starts PostgreSQL for production-adapter work. The current MVP uses a local file-backed adapter so the core flow remains dependency-light and deterministic during development.
+`docker compose up` starts PostgreSQL for production-adapter work. The current local development adapter is file-backed so the core flow remains dependency-light and deterministic while production persistence is implemented behind the same store contract.
 
 ## Security Notes
 
@@ -152,10 +152,10 @@ pnpm run verify
 
 ## Known Limitations
 
-- PostgreSQL persistence is defined by migration and ready for adapter implementation, while the current runnable MVP uses the file-backed adapter.
+- PostgreSQL persistence is defined by migration and ready for adapter implementation, while the current runnable local adapter is file-backed.
 - The plugin host is represented by a public manifest compatibility helper; dynamic plugin loading is intentionally out of scope for this first slice.
 - OpenAPI is authored directly and should be generated from a single source of truth in a later release.
 
 ## License
 
-Apache-2.0. See [LICENSE.md](./LICENSE.md).
+Apache-2.0. The repository uses the standard root [LICENSE](./LICENSE) file so GitHub can display the license in its repository metadata.

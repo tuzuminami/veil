@@ -20,7 +20,7 @@ The server writes local development state to `.local-data/veil-store.json` by de
 docker compose up
 ```
 
-The first migration is in `migrations/001_init.sql`. The runnable MVP uses the file-backed adapter; PostgreSQL is provided for production adapter work and migration review.
+The first migration is in `migrations/001_init.sql`. The runnable local adapter is file-backed; PostgreSQL is provided for production adapter work and migration review.
 
 ## Common Failure Checks
 

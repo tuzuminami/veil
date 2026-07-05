@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { FileVeilStore } from "../src/adapters/file-store.js";
 import { VeilService } from "../src/application/veil-service.js";
 import { VeilError } from "../src/core/errors.js";
+import { buildServer } from "../src/transport/http-server.js";
 
 const bundle = {
   name: "baseline",
@@ -145,6 +147,30 @@ test("decision idempotency returns the original result", async () => {
   }
 });
 
+test("HTTP boundary returns validation error for malformed JSON", async () => {
+  const fixture = await createFixture();
+  const server = buildServer(fixture.path);
+  try {
+    const response = await dispatch(server, {
+      method: "POST",
+      url: "/v1/policies",
+      headers: {
+        authorization: "Bearer dev:tenant-a:tester:policy:write",
+        "x-tenant-id": "tenant-a",
+        "content-type": "application/json"
+      },
+      body: "{"
+    });
+
+    assert.equal(response.status, 422);
+    const payload = JSON.parse(response.body);
+    assert.equal(payload.error.code, "VALIDATION_FAILED");
+    assert.equal(payload.error.message, "JSON body is malformed.");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 function ctx(tenantId, scopes) {
   return { tenantId, actorId: "tester", scopes, correlationId: "corr-test" };
 }
@@ -157,6 +183,28 @@ async function createFixture() {
     service: new VeilService(new FileVeilStore(path), { now: () => new Date("2026-01-01T00:00:00.000Z") }, deterministicId()),
     cleanup: async () => rm(dir, { recursive: true, force: true })
   };
+}
+
+function dispatch(server, { method, url, headers, body }) {
+  return new Promise((resolve, reject) => {
+    const request = Readable.from(body === undefined ? [] : [body]);
+    request.method = method;
+    request.url = url;
+    request.headers = headers;
+    const response = {
+      status: undefined,
+      headers: undefined,
+      writeHead(status, responseHeaders) {
+        this.status = status;
+        this.headers = responseHeaders;
+      },
+      end(responseBody) {
+        resolve({ status: this.status, headers: this.headers, body: responseBody });
+      }
+    };
+    server.emit("request", request, response);
+    request.once("error", reject);
+  });
 }
 
 function deterministicId() {

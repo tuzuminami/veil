@@ -90,7 +90,12 @@ async function readJson(request) {
   const chunks = [];
   for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   if (chunks.length === 0) return {};
-  const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new VeilError("VALIDATION_FAILED", "JSON body is malformed.", 422);
+  }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new VeilError("VALIDATION_FAILED", "JSON body must be an object.", 422);
   return parsed;
 }
