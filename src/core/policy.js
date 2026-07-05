@@ -35,6 +35,12 @@ export function decide(policy, request) {
   if (request.adapterResult?.status === "unknown") {
     return { action: "BLOCK", reasonCodes: ["ADAPTER_UNKNOWN_FAIL_CLOSED"], obligations: [] };
   }
+  if (request.adapterResult !== undefined && request.adapterResult.status !== "ok") {
+    return { action: "BLOCK", reasonCodes: ["ADAPTER_AMBIGUOUS_FAIL_CLOSED"], obligations: [] };
+  }
+  if (request.adapterResult?.status === "ok" && !ACTIONS.has(request.adapterResult.result)) {
+    return { action: "BLOCK", reasonCodes: ["ADAPTER_AMBIGUOUS_FAIL_CLOSED"], obligations: [] };
+  }
 
   const ordered = [...policy.bundle.rules].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
   for (const rule of ordered) {

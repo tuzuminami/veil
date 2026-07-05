@@ -111,6 +111,79 @@ test("adapter unknown and timeout fail closed", async () => {
   }
 });
 
+test("ambiguous classifier output fails closed before rule allow", async () => {
+  const fixture = await createFixture();
+  try {
+    const service = fixture.service;
+    const context = ctx("tenant-a", ["policy:write", "decision:write"]);
+    await service.createDraft(context, "policy-main", bundle);
+    await service.publish(context, "policy-main", "1.0.0", "publish-key");
+
+    const ambiguous = await service.createDecision(
+      context,
+      { policyId: "policy-main", version: "1.0.0", input: { risk: "low" }, adapterResult: { status: "ok", source: "classifier" } },
+      "ambiguous-key"
+    );
+
+    assert.equal(ambiguous.action, "BLOCK");
+    assert.deepEqual(ambiguous.reasonCodes, ["ADAPTER_AMBIGUOUS_FAIL_CLOSED"]);
+    assert.equal(ambiguous.matchedRuleId, undefined);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("malformed policy fails validation", async () => {
+  const fixture = await createFixture();
+  try {
+    await assert.rejects(
+      fixture.service.createDraft(ctx("tenant-a", ["policy:write"]), "bad-policy", { ...bundle, defaultAction: "ALLOW" }),
+      (error) => error instanceof VeilError && error.code === "VALIDATION_FAILED" && error.details.includes("defaultAction must be BLOCK or ESCALATE")
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("missing and unpublished policy states do not create decisions", async () => {
+  const fixture = await createFixture();
+  try {
+    const service = fixture.service;
+    const context = ctx("tenant-a", ["policy:write", "decision:write"]);
+
+    await assert.rejects(
+      service.createDecision(context, { policyId: "missing", version: "1.0.0", input: { risk: "low" } }, "missing-key"),
+      (error) => error instanceof VeilError && error.code === "RESOURCE_NOT_FOUND"
+    );
+
+    await service.createDraft(context, "draft-only", bundle);
+    await assert.rejects(
+      service.createDecision(context, { policyId: "draft-only", version: "1.0.0", input: { risk: "low" } }, "draft-key"),
+      (error) => error instanceof VeilError && error.code === "VALIDATION_FAILED" && error.message === "Policy version is not published."
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("default action is BLOCK when no rule matches", async () => {
+  const fixture = await createFixture();
+  try {
+    const service = fixture.service;
+    const context = ctx("tenant-a", ["policy:write", "decision:write"]);
+    await service.createDraft(context, "policy-main", bundle);
+    await service.publish(context, "policy-main", "1.0.0", "publish-key");
+
+    const decision = await service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { risk: "medium" } }, "default-block");
+
+    assert.equal(decision.action, "BLOCK");
+    assert.deepEqual(decision.reasonCodes, ["NO_MATCH_FAIL_CLOSED"]);
+    assert.equal(decision.matchedRuleId, undefined);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("tenant and scope boundaries deny access", async () => {
   const fixture = await createFixture();
   try {
@@ -142,6 +215,28 @@ test("decision idempotency returns the original result", async () => {
     const second = await service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { message: "secret" } }, "same-key");
     assert.equal(second.id, first.id);
     assert.equal(second.action, "ALLOW");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("audit evidence records policy version and matched rule without raw input", async () => {
+  const fixture = await createFixture();
+  try {
+    const service = fixture.service;
+    const context = ctx("tenant-a", ["policy:write", "decision:write"]);
+    await service.createDraft(context, "policy-main", bundle);
+    await service.publish(context, "policy-main", "1.0.0", "publish-key");
+    const decision = await service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } }, "audit-key");
+    const raw = JSON.parse(await readFile(fixture.path, "utf8"));
+    const decisionAudit = raw.auditEvents.find((event) => event.action === "decision.created" && event.resourceId === decision.id);
+
+    assert.equal(decision.policyId, "policy-main");
+    assert.equal(decision.version, "1.0.0");
+    assert.equal(decision.matchedRuleId, "allow-low-risk");
+    assert.equal(decisionAudit.evidenceHash, decision.evidenceHash);
+    assert.equal(raw.decisions[0].inputHash, decision.inputHash);
+    assert.doesNotMatch(JSON.stringify(raw.auditEvents), /"risk":"low"/);
   } finally {
     await fixture.cleanup();
   }
