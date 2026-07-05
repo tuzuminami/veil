@@ -1,20 +1,29 @@
 openapi: 3.1.0
 info:
   title: VEIL API
-  version: 0.1.0
+  version: 0.2.0
   license:
     name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
 paths:
   /health:
     get:
       responses:
         "200":
           description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEnvelope"
   /ready:
     get:
       responses:
         "200":
           description: Readiness status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEnvelope"
   /v1/policies:
     post:
       summary: Create a draft policy bundle version.
@@ -36,6 +45,10 @@ paths:
       responses:
         "201":
           description: Draft policy version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyVersionEnvelope"
         "401":
           $ref: "#/components/responses/Error"
         "403":
@@ -60,6 +73,18 @@ paths:
       responses:
         "200":
           description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationResultEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
   /v1/policies/{policyId}/publish:
     post:
       summary: Publish an immutable policy version.
@@ -84,6 +109,18 @@ paths:
       responses:
         "200":
           description: Published policy version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyVersionEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
   /v1/decisions:
     post:
       summary: Evaluate a conversational policy decision.
@@ -104,6 +141,18 @@ paths:
       responses:
         "201":
           description: Policy decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
   /v1/decisions/{decisionId}:
     get:
       summary: Retrieve decision evidence.
@@ -117,6 +166,16 @@ paths:
       responses:
         "200":
           description: Decision evidence
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /v1/appeals:
     post:
       summary: Create an appeal linked to a prior decision.
@@ -137,6 +196,18 @@ paths:
       responses:
         "201":
           description: Appeal record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppealEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
 components:
   parameters:
     TenantId:
@@ -160,7 +231,168 @@ components:
   responses:
     Error:
       description: Stable error envelope
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    Meta:
+      type: object
+      required: [requestId, correlationId, apiVersion]
+      properties:
+        requestId:
+          type: string
+        correlationId:
+          type: string
+        apiVersion:
+          type: string
+          enum: [v1]
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, details, correlationId]
+          properties:
+            code:
+              enum: [AUTHENTICATION_REQUIRED, TENANT_SCOPE_DENIED, RESOURCE_NOT_FOUND, VALIDATION_FAILED, DEPENDENCY_UNAVAILABLE]
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: string
+            correlationId:
+              type: string
+    HealthEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [status]
+          properties:
+            status:
+              enum: [ok, ready]
+        meta:
+          $ref: "#/components/schemas/Meta"
+    PolicyVersionEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/PolicyVersion"
+        meta:
+          $ref: "#/components/schemas/Meta"
+    ValidationResultEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [valid, contentHash]
+          properties:
+            valid:
+              type: boolean
+            contentHash:
+              type: string
+        meta:
+          $ref: "#/components/schemas/Meta"
+    DecisionEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/Decision"
+        meta:
+          $ref: "#/components/schemas/Meta"
+    AppealEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/Appeal"
+        meta:
+          $ref: "#/components/schemas/Meta"
+    PolicyVersion:
+      type: object
+      required: [policyId, tenantId, version, status, bundle, contentHash, createdAt, createdBy]
+      properties:
+        policyId:
+          type: string
+        tenantId:
+          type: string
+        version:
+          type: string
+        status:
+          enum: [draft, published]
+        bundle:
+          $ref: "#/components/schemas/PolicyBundleDraft"
+        contentHash:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        publishedAt:
+          type: string
+          format: date-time
+    Decision:
+      type: object
+      required: [id, tenantId, policyId, version, action, reasonCodes, obligations, inputHash, evidenceHash, correlationId, createdAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        policyId:
+          type: string
+        version:
+          type: string
+        action:
+          enum: [ALLOW, TRANSFORM, REQUIRE_CONFIRMATION, BLOCK, ESCALATE]
+        reasonCodes:
+          type: array
+          items:
+            type: string
+        obligations:
+          type: array
+          items:
+            type: string
+        matchedRuleId:
+          type: string
+        inputHash:
+          type: string
+        evidenceHash:
+          type: string
+        correlationId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    Appeal:
+      type: object
+      required: [id, tenantId, decisionId, status, reason, correlationId, createdAt, createdBy]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        decisionId:
+          type: string
+        status:
+          enum: [open]
+        reason:
+          type: string
+        correlationId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
     PolicyBundleDraft:
       type: object
       required: [name, version, defaultAction, rules]

@@ -138,6 +138,7 @@ scripts/            quality and private-boundary checks
 pnpm run build
 pnpm run test
 pnpm run check:private-boundary
+pnpm run check:release
 pnpm run verify
 ```
 
@@ -155,6 +156,10 @@ pnpm run verify
 - PostgreSQL persistence is defined by migration and ready for adapter implementation, while the current runnable local adapter is file-backed.
 - The plugin host is represented by a public manifest compatibility helper; dynamic plugin loading is intentionally out of scope for this first slice.
 - OpenAPI is authored directly and should be generated from a single source of truth in a later release.
+
+## Release Readiness
+
+Public releases follow [docs/runbooks/release.md](./docs/runbooks/release.md). The release gate verifies local tests, private-boundary checks, package contents, version alignment, and GitHub's Apache-2.0 license detection.
 
 ## License
 
