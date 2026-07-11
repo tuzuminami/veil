@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { FileVeilStore } from "../src/adapters/file-store.js";
 import { VeilService } from "../src/application/veil-service.js";
@@ -386,6 +386,32 @@ test("file-store updates are serialized across instances sharing one path", asyn
   }
 });
 
+test("file-store updates share one queue across symlink path aliases", async () => {
+  const fixture = await createFixture();
+  const alias = `${fixture.path}-alias-dir`;
+  try {
+    const realDirectory = dirname(fixture.path);
+    await symlink(realDirectory, alias, "dir");
+    const aliasedPath = join(alias, basename(fixture.path));
+    const context = ctx("tenant-a", ["policy:write", "decision:write", "decision:read"]);
+    await fixture.service.createDraft(context, "policy-main", bundle);
+    await fixture.service.publish(context, "policy-main", "1.0.0", "publish-key");
+    const aliasService = new VeilService(new FileVeilStore(aliasedPath));
+    const request = { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } };
+
+    const decisions = await Promise.all([
+      fixture.service.createDecision(context, request, "symlink-key"),
+      aliasService.createDecision(context, request, "symlink-key")
+    ]);
+    const raw = JSON.parse(await readFile(fixture.path, "utf8"));
+    assert.equal(decisions[0].id, decisions[1].id);
+    assert.equal(raw.decisions.length, 1);
+  } finally {
+    await rm(alias, { force: true });
+    await fixture.cleanup();
+  }
+});
+
 test("file idempotency isolates colliding tenant and client-key tuples", async () => {
   const fixture = await createFixture();
   try {
@@ -556,6 +582,26 @@ test("file policy bindings read legacy flat binding files", async () => {
     });
 
     assert.equal(await fixture.store.getActivePolicyVersion("tenant-a", "policy-main"), "0.2.0");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("ambiguous legacy flat policy bindings fail closed", async () => {
+  const fixture = await createFixture();
+  try {
+    await fixture.store.update((data) => {
+      data.activePolicyBindings["tenant:a:policy"] = { version: "0.2.0" };
+    });
+
+    await assert.rejects(
+      fixture.store.getActivePolicyVersion("tenant:a", "policy"),
+      (error) => error instanceof VeilError && error.code === "LEGACY_BINDING_AMBIGUOUS"
+    );
+    await assert.rejects(
+      fixture.store.getActivePolicyVersion("tenant", "a:policy"),
+      (error) => error instanceof VeilError && error.code === "LEGACY_BINDING_AMBIGUOUS"
+    );
   } finally {
     await fixture.cleanup();
   }

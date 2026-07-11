@@ -10,6 +10,9 @@ const DEVELOPMENT_AUTHENTICATOR = Symbol("veil.development-authenticator");
 export function buildServer(options = {}) {
   const resolved = typeof options === "string" ? { storePath: options } : options;
   if (process.env.NODE_ENV === "production") {
+    if (resolved.service !== undefined) {
+      throw new Error("VEIL production runtime constructs its service from the validated persistence adapter; custom service injection is disabled.");
+    }
     if (resolved.store === undefined || resolved.store instanceof FileVeilStore) {
       throw new Error("VEIL production runtime requires an explicit production persistence adapter; file persistence is disabled.");
     }

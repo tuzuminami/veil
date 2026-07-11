@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { VeilError } from "../core/errors.js";
 
 const UPDATE_QUEUES = new Map();
@@ -56,7 +56,11 @@ export class FileVeilStore {
       (item) => item.tenantId === tenantId && item.policyId === policyId
     );
     if (binding !== undefined) return binding.version;
-    return data.activePolicyBindings?.[`${tenantId}:${policyId}`]?.version;
+    const legacy = data.activePolicyBindings?.[`${tenantId}:${policyId}`];
+    if (legacy !== undefined && (tenantId.includes(":") || policyId.includes(":"))) {
+      throw new VeilError("LEGACY_BINDING_AMBIGUOUS", "Legacy active policy binding requires migration to the structured format.", 409);
+    }
+    return legacy?.version;
   }
 
   async setActivePolicyVersion(tenantId, policyId, version, metadata = {}) {
@@ -222,7 +226,8 @@ export class FileVeilStore {
   }
 
   async update(mutator) {
-    const previous = UPDATE_QUEUES.get(this.path) ?? Promise.resolve();
+    const queuePath = await canonicalQueuePath(this.path);
+    const previous = UPDATE_QUEUES.get(queuePath) ?? Promise.resolve();
     const run = previous.then(async () => {
       const data = await this.load();
       mutator(data);
@@ -231,8 +236,24 @@ export class FileVeilStore {
       await writeFile(temporaryPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
       await rename(temporaryPath, this.path);
     });
-    UPDATE_QUEUES.set(this.path, run.catch(() => undefined));
+    UPDATE_QUEUES.set(queuePath, run.catch(() => undefined));
     return run;
+  }
+}
+
+async function canonicalQueuePath(path) {
+  let parent = dirname(path);
+  const suffix = [basename(path)];
+  while (true) {
+    try {
+      return join(await realpath(parent), ...suffix);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const next = dirname(parent);
+      if (next === parent) return resolve(path);
+      suffix.unshift(basename(parent));
+      parent = next;
+    }
   }
 }
 

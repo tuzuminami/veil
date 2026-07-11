@@ -62,7 +62,8 @@ test("public server builder rejects development persistence and auth in producti
     assert.throws(() => root.buildServer(), /production persistence adapter/);
     assert.throws(() => root.buildServer({ store: new root.FileVeilStore(".local-data/test.json"), authenticator: productionAuth }), /file persistence is disabled/);
     assert.throws(() => root.buildServer({ store: productionStore, authenticator: root.createDevelopmentAuthenticator() }), /production auth adapter/);
-    const server = root.buildServer({ store: productionStore, service: {}, authenticator: productionAuth });
+    assert.throws(() => root.buildServer({ store: productionStore, service: new root.VeilService(new root.FileVeilStore(".local-data/injected.json")), authenticator: productionAuth }), /custom service injection is disabled/);
+    const server = root.buildServer({ store: productionStore, authenticator: productionAuth });
     server.close();
   } finally {
     if (previous === undefined) {
