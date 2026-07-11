@@ -14,13 +14,16 @@ node src/server.js
 
 The server writes local development state to `.local-data/veil-store.json` by default. This path is ignored and must not be committed.
 
+The default file-backed server and development bearer token are local-only. File-store writes are coordinated across instances in one Node.js process, but the file adapter is not a multi-process or distributed store. With `NODE_ENV=production`, the same entrypoint requires the PostgreSQL and OIDC configuration documented in [production.md](./production.md) and fails closed when any required setting is missing.
+
 ## Start PostgreSQL
 
 ```bash
+export VEIL_POSTGRES_PASSWORD='local-only-password'
 docker compose up
 ```
 
-The first migration is in `migrations/001_init.sql`. The runnable local adapter is file-backed; PostgreSQL is provided for production adapter work and migration review.
+Migrations are in `migrations/001_init.sql` and `migrations/002_v1.sql`. The default local server remains file-backed; the production runtime uses PostgreSQL when its required environment is configured.
 
 ## Common Failure Checks
 

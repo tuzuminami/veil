@@ -1,0 +1,35 @@
+{
+  "name": "agent-baseline",
+  "version": "1.0.0",
+  "defaultAction": "BLOCK",
+  "rules": [
+    {
+      "id": "block-restricted-data",
+      "priority": 0,
+      "effect": "BLOCK",
+      "match": { "field": "resource.classification", "operator": "equals", "value": "restricted" },
+      "reasonCode": "RESTRICTED_DATA_BLOCKED"
+    },
+    {
+      "id": "block-over-budget",
+      "priority": 1,
+      "effect": "BLOCK",
+      "match": { "field": "estimatedCost", "operator": "greaterThan", "value": 1 },
+      "reasonCode": "COST_CEILING_EXCEEDED"
+    },
+    {
+      "id": "confirm-tool-call",
+      "priority": 10,
+      "effect": "REQUIRE_CONFIRMATION",
+      "match": { "field": "type", "operator": "equals", "value": "tool_call" },
+      "reasonCode": "TOOL_CONFIRMATION_REQUIRED"
+    },
+    {
+      "id": "allow-approved-model",
+      "priority": 20,
+      "effect": "ALLOW",
+      "match": { "field": "model.id", "operator": "equals", "value": "approved-model" },
+      "reasonCode": "APPROVED_MODEL"
+    }
+  ]
+}

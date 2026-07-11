@@ -14,6 +14,18 @@ export class VeilClient {
     return this.request("POST", `/v1/policies/${encodeURIComponent(policyId)}/publish`, { version }, { "Idempotency-Key": idempotencyKey });
   }
 
+  bindPolicy(policyId, version) {
+    return this.request("POST", `/v1/policies/${encodeURIComponent(policyId)}/bind`, { version });
+  }
+
+  rollbackPolicy(policyId, version) {
+    return this.request("POST", `/v1/policies/${encodeURIComponent(policyId)}/rollback`, { version });
+  }
+
+  async evaluateAccess(request, requestId) {
+    return this.requestJson("POST", "/access/v1/evaluation", request, requestId === undefined ? {} : { "X-Request-ID": requestId });
+  }
+
   createDecision(request, idempotencyKey) {
     return this.request("POST", "/v1/decisions", { request }, { "Idempotency-Key": idempotencyKey });
   }
@@ -26,13 +38,27 @@ export class VeilClient {
     return this.request("GET", `/v1/decisions/${encodeURIComponent(decisionId)}`);
   }
 
+  listAuditEvents({ limit, cursor } = {}) {
+    const query = new URLSearchParams();
+    if (limit !== undefined) query.set("limit", String(limit));
+    if (cursor !== undefined) query.set("cursor", cursor);
+    const suffix = query.size === 0 ? "" : `?${query}`;
+    return this.request("GET", `/v1/audit-events${suffix}`);
+  }
+
   async request(method, path, body, extraHeaders = {}) {
+    const json = await this.requestJson(method, path, body, extraHeaders);
+    return json.data;
+  }
+
+  async requestJson(method, path, body, extraHeaders = {}) {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${this.token}`,
         "X-Tenant-Id": this.tenantId,
         "Content-Type": "application/json",
+        Accept: "application/json",
         ...extraHeaders
       },
       body: body === undefined ? undefined : JSON.stringify(body)
@@ -43,6 +69,6 @@ export class VeilClient {
       error.response = json;
       throw error;
     }
-    return json.data;
+    return json;
   }
 }

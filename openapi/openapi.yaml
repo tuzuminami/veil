@@ -1,29 +1,75 @@
 openapi: 3.1.0
 info:
   title: VEIL API
-  version: 0.2.0
+  version: 1.0.0
+  description: Fail-closed policy decisions for AI agent model and tool execution.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: https://veil.example.com
+security:
+  - bearerAuth: []
 paths:
   /health:
     get:
+      security: []
+      summary: Process liveness.
       responses:
         "200":
-          description: Health status
+          description: Process is alive.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthEnvelope"
   /ready:
     get:
+      security: []
+      summary: Persistence readiness.
       responses:
         "200":
-          description: Readiness status
+          description: Persistence is ready.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthEnvelope"
+        "503":
+          $ref: "#/components/responses/Error"
+  /access/v1/evaluation:
+    post:
+      summary: AuthZEN Authorization API 1.0-compatible single access evaluation.
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/TenantId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthZenEvaluationRequest"
+      responses:
+        "200":
+          description: Authorization decision. A denial is represented by decision false.
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthZenEvaluationResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
   /v1/policies:
     post:
       summary: Create a draft policy bundle version.
@@ -40,11 +86,12 @@ paths:
               properties:
                 policyId:
                   type: string
+                  minLength: 1
                 bundle:
                   $ref: "#/components/schemas/PolicyBundleDraft"
       responses:
         "201":
-          description: Draft policy version
+          description: Draft policy version.
           content:
             application/json:
               schema:
@@ -60,19 +107,11 @@ paths:
       summary: Validate a draft policy bundle.
       parameters:
         - $ref: "#/components/parameters/TenantId"
-        - name: policyId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: version
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/PolicyId"
+        - $ref: "#/components/parameters/Version"
       responses:
         "200":
-          description: Validation result
+          description: Validation result.
           content:
             application/json:
               schema:
@@ -91,24 +130,60 @@ paths:
       parameters:
         - $ref: "#/components/parameters/TenantId"
         - $ref: "#/components/parameters/IdempotencyKey"
-        - name: policyId
-          in: path
-          required: true
-          schema:
-            type: string
+        - $ref: "#/components/parameters/PolicyId"
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [version]
-              properties:
-                version:
-                  type: string
+        $ref: "#/components/requestBodies/PolicyVersion"
       responses:
         "200":
-          description: Published policy version
+          description: Published policy version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyVersionEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /v1/policies/{policyId}/bind:
+    post:
+      summary: Set the active published policy version.
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/PolicyId"
+      requestBody:
+        $ref: "#/components/requestBodies/PolicyVersion"
+      responses:
+        "200":
+          description: Active policy version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyVersionEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /v1/policies/{policyId}/rollback:
+    post:
+      summary: Roll back the active binding to a prior published version.
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - $ref: "#/components/parameters/PolicyId"
+      requestBody:
+        $ref: "#/components/requestBodies/PolicyVersion"
+      responses:
+        "200":
+          description: Restored policy version.
           content:
             application/json:
               schema:
@@ -123,7 +198,7 @@ paths:
           $ref: "#/components/responses/Error"
   /v1/decisions:
     post:
-      summary: Evaluate a conversational policy decision.
+      summary: Evaluate a typed AI pre-execution policy decision.
       parameters:
         - $ref: "#/components/parameters/TenantId"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -140,7 +215,7 @@ paths:
                   $ref: "#/components/schemas/DecisionRequest"
       responses:
         "201":
-          description: Policy decision
+          description: Policy decision with a tamper-evident receipt.
           content:
             application/json:
               schema:
@@ -151,11 +226,13 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/Error"
   /v1/decisions/{decisionId}:
     get:
-      summary: Retrieve decision evidence.
+      summary: Retrieve a tenant-scoped decision receipt.
       parameters:
         - $ref: "#/components/parameters/TenantId"
         - name: decisionId
@@ -165,7 +242,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Decision evidence
+          description: Decision evidence.
           content:
             application/json:
               schema:
@@ -175,6 +252,37 @@ paths:
         "403":
           $ref: "#/components/responses/Error"
         "404":
+          $ref: "#/components/responses/Error"
+  /v1/audit-events:
+    get:
+      summary: List tenant-scoped audit events with cursor pagination.
+      parameters:
+        - $ref: "#/components/parameters/TenantId"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Audit event page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPageEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "422":
           $ref: "#/components/responses/Error"
   /v1/appeals:
     post:
@@ -195,7 +303,7 @@ paths:
                   $ref: "#/components/schemas/AppealRequest"
       responses:
         "201":
-          description: Appeal record
+          description: Appeal record.
           content:
             application/json:
               schema:
@@ -206,18 +314,32 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/Error"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   parameters:
     TenantId:
       name: X-Tenant-Id
       in: header
-      required: true
+      required: false
+      description: Optional requested tenant. Production authorization derives the authoritative tenant from the verified JWT and rejects mismatches.
       schema:
         type: string
     CorrelationId:
       name: X-Correlation-Id
+      in: header
+      required: false
+      schema:
+        type: string
+    RequestId:
+      name: X-Request-ID
       in: header
       required: false
       schema:
@@ -228,9 +350,32 @@ components:
       required: true
       schema:
         type: string
+    PolicyId:
+      name: policyId
+      in: path
+      required: true
+      schema:
+        type: string
+    Version:
+      name: version
+      in: path
+      required: true
+      schema:
+        type: string
+  requestBodies:
+    PolicyVersion:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [version]
+            properties:
+              version:
+                type: string
   responses:
     Error:
-      description: Stable error envelope
+      description: Stable fail-closed error envelope.
       content:
         application/json:
           schema:
@@ -245,8 +390,7 @@ components:
         correlationId:
           type: string
         apiVersion:
-          type: string
-          enum: [v1]
+          const: v1
     ErrorEnvelope:
       type: object
       required: [error]
@@ -256,7 +400,17 @@ components:
           required: [code, message, details, correlationId]
           properties:
             code:
-              enum: [AUTHENTICATION_REQUIRED, TENANT_SCOPE_DENIED, RESOURCE_NOT_FOUND, VALIDATION_FAILED, DEPENDENCY_UNAVAILABLE]
+              enum:
+                - AUTHENTICATION_REQUIRED
+                - AUTHENTICATION_UNAVAILABLE
+                - TENANT_SCOPE_DENIED
+                - RESOURCE_NOT_FOUND
+                - VALIDATION_FAILED
+                - IDEMPOTENCY_CONFLICT
+                - STORE_CAPABILITY_UNAVAILABLE
+                - PAYLOAD_TOO_LARGE
+                - UNSUPPORTED_MEDIA_TYPE
+                - DEPENDENCY_UNAVAILABLE
             message:
               type: string
             details:
@@ -315,6 +469,22 @@ components:
           $ref: "#/components/schemas/Appeal"
         meta:
           $ref: "#/components/schemas/Meta"
+    AuditPageEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/AuditEvent"
+            nextCursor:
+              type: string
+        meta:
+          $ref: "#/components/schemas/Meta"
     PolicyVersion:
       type: object
       required: [policyId, tenantId, version, status, bundle, contentHash, createdAt, createdBy]
@@ -339,9 +509,193 @@ components:
         publishedAt:
           type: string
           format: date-time
+    PolicyBundleDraft:
+      type: object
+      required: [name, version, defaultAction, rules]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+        version:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+        defaultAction:
+          enum: [BLOCK, ESCALATE]
+        rules:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PolicyRule"
+    PolicyRule:
+      type: object
+      required: [id, priority, effect, match, reasonCode]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+        priority:
+          type: integer
+          minimum: 0
+        effect:
+          enum: [ALLOW, TRANSFORM, REQUIRE_CONFIRMATION, BLOCK, ESCALATE]
+        match:
+          type: object
+          required: [field, operator]
+          properties:
+            field:
+              type: string
+              minLength: 1
+              pattern: ".*\\S.*"
+            operator:
+              enum: [equals, contains, absent, greaterThan, lessThanOrEqual]
+            value:
+              oneOf:
+                - type: string
+                - type: number
+                - type: boolean
+        reasonCode:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+        obligations:
+          type: array
+          items:
+            type: string
+    DecisionRequest:
+      oneOf:
+        - title: LegacyDecisionRequest
+          type: object
+          required: [policyId, input]
+          additionalProperties: false
+          properties:
+            policyId:
+              type: string
+              minLength: 1
+              pattern: ".*\\S.*"
+            version:
+              type: string
+              minLength: 1
+              pattern: ".*\\S.*"
+            input:
+              type: object
+            adapterResult:
+              $ref: "#/components/schemas/AdapterResult"
+        - title: TypedDecisionRequest
+          type: object
+          required: [policyId, input, type, agent, resource, dataClassification, model, estimatedCost, attributes]
+          additionalProperties: false
+          properties:
+            policyId:
+              type: string
+              minLength: 1
+              pattern: ".*\\S.*"
+            version:
+              type: string
+              minLength: 1
+              pattern: ".*\\S.*"
+            input:
+              type: object
+            type:
+              enum: [model_call, tool_call]
+            agent:
+              $ref: "#/components/schemas/Agent"
+            resource:
+              $ref: "#/components/schemas/AiResource"
+            dataClassification:
+              $ref: "#/components/schemas/DataClassification"
+            model:
+              $ref: "#/components/schemas/Model"
+            estimatedCost:
+              type: number
+              minimum: 0
+            attributes:
+              type: object
+            adapterResult:
+              $ref: "#/components/schemas/AdapterResult"
+    AdapterResult:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          enum: [ok, unknown, timeout]
+        source:
+          type: string
+        result:
+          enum: [ALLOW, TRANSFORM, REQUIRE_CONFIRMATION, BLOCK, ESCALATE]
+    Agent:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+        type:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+    AiResource:
+      type: object
+      additionalProperties: false
+      required: [id, type, classification]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+        type:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+        classification:
+          $ref: "#/components/schemas/DataClassification"
+    Model:
+      type: object
+      additionalProperties: false
+      required: [provider, id]
+      properties:
+        provider:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+        id:
+          type: string
+          minLength: 1
+          pattern: ".*\\S.*"
+    DataClassification:
+      enum: [public, internal, confidential, restricted]
     Decision:
+      oneOf:
+        - $ref: "#/components/schemas/LegacyDecision"
+        - $ref: "#/components/schemas/CurrentDecision"
+    LegacyDecision:
+      allOf:
+        - $ref: "#/components/schemas/DecisionBase"
+        - type: object
+          required: [legacy]
+          not:
+            required: [receipt]
+          properties:
+            legacy:
+              const: true
+    CurrentDecision:
+      allOf:
+        - $ref: "#/components/schemas/DecisionBase"
+        - type: object
+          required: [receipt]
+          properties:
+            legacy:
+              const: false
+            receipt:
+              $ref: "#/components/schemas/DecisionReceipt"
+    DecisionBase:
       type: object
       required: [id, tenantId, policyId, version, action, reasonCodes, obligations, inputHash, evidenceHash, correlationId, createdAt]
+      additionalProperties: false
       properties:
         id:
           type: string
@@ -372,6 +726,118 @@ components:
         createdAt:
           type: string
           format: date-time
+        legacy:
+          type: boolean
+        receipt:
+          $ref: "#/components/schemas/DecisionReceipt"
+    DecisionReceipt:
+      type: object
+      required: [receiptVersion, decisionId, tenantId, policyId, policyVersion, policyHash, action, reasonCodes, obligations, inputHash, evidenceHash, correlationId, createdAt, receiptHash]
+      properties:
+        receiptVersion:
+          const: veil-decision-receipt/1.0
+        decisionId:
+          type: string
+        tenantId:
+          type: string
+        policyId:
+          type: string
+        policyVersion:
+          type: string
+        policyHash:
+          type: string
+        action:
+          enum: [ALLOW, TRANSFORM, REQUIRE_CONFIRMATION, BLOCK, ESCALATE]
+        reasonCodes:
+          type: array
+          items:
+            type: string
+        obligations:
+          type: array
+          items:
+            type: string
+        matchedRuleId:
+          type: string
+        inputHash:
+          type: string
+        evidenceHash:
+          type: string
+        correlationId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        receiptHash:
+          type: string
+    AuditEvent:
+      type: object
+      required: [id, tenantId, actorId, action, resourceType, resourceId, correlationId, reason, evidenceHash, createdAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        actorId:
+          type: string
+        action:
+          type: string
+        resourceType:
+          type: string
+        resourceId:
+          type: string
+        correlationId:
+          type: string
+        reason:
+          type: string
+        evidenceHash:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    AuthZenEvaluationRequest:
+      type: object
+      required: [subject, action, resource]
+      properties:
+        subject:
+          $ref: "#/components/schemas/AuthZenEntity"
+        action:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+            properties:
+              type: object
+        resource:
+          $ref: "#/components/schemas/AuthZenEntity"
+        context:
+          type: object
+    AuthZenEntity:
+      type: object
+      required: [type, id]
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        properties:
+          type: object
+    AuthZenEvaluationResponse:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: boolean
+        context:
+          type: object
+    AppealRequest:
+      type: object
+      required: [decisionId]
+      properties:
+        decisionId:
+          type: string
+        reason:
+          type: string
     Appeal:
       type: object
       required: [id, tenantId, decisionId, status, reason, correlationId, createdAt, createdBy]
@@ -383,7 +849,7 @@ components:
         decisionId:
           type: string
         status:
-          enum: [open]
+          const: open
         reason:
           type: string
         correlationId:
@@ -392,73 +858,4 @@ components:
           type: string
           format: date-time
         createdBy:
-          type: string
-    PolicyBundleDraft:
-      type: object
-      required: [name, version, defaultAction, rules]
-      properties:
-        name:
-          type: string
-        version:
-          type: string
-        defaultAction:
-          enum: [BLOCK, ESCALATE]
-        rules:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/PolicyRule"
-    PolicyRule:
-      type: object
-      required: [id, priority, effect, match, reasonCode]
-      properties:
-        id:
-          type: string
-        priority:
-          type: integer
-          minimum: 0
-        effect:
-          enum: [ALLOW, TRANSFORM, REQUIRE_CONFIRMATION, BLOCK, ESCALATE]
-        match:
-          type: object
-          required: [field, operator]
-          properties:
-            field:
-              type: string
-            operator:
-              enum: [equals, contains, absent]
-            value:
-              type: string
-        reasonCode:
-          type: string
-        obligations:
-          type: array
-          items:
-            type: string
-    DecisionRequest:
-      type: object
-      required: [policyId, version, input]
-      properties:
-        policyId:
-          type: string
-        version:
-          type: string
-        input:
-          type: object
-        adapterResult:
-          type: object
-          properties:
-            status:
-              enum: [ok, unknown, timeout]
-            source:
-              type: string
-            result:
-              enum: [ALLOW, TRANSFORM, REQUIRE_CONFIRMATION, BLOCK, ESCALATE]
-    AppealRequest:
-      type: object
-      required: [decisionId]
-      properties:
-        decisionId:
-          type: string
-        reason:
           type: string

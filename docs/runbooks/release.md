@@ -1,34 +1,30 @@
 # Release Runbook
 
-## Scope
-
-Use this checklist for public VEIL releases. Releases must preserve the fail-closed posture, tenant isolation guarantees, audit metadata, and Apache-2.0 licensing posture.
-
-## Required Checks
+## Required Evidence
 
 ```bash
+pnpm install --frozen-lockfile
+pnpm run audit
 pnpm run verify
 pnpm pack --dry-run
 gh api repos/tuzuminami/veil/license --jq '.license.spdx_id'
 ```
 
-The license command must return:
+The license result must be `Apache-2.0`. The CI workflow must pass on the exact release commit and produce a CycloneDX SBOM artifact.
 
-```text
-Apache-2.0
-```
+## Release Review
 
-## Release Steps
+1. Confirm `package.json`, OpenAPI, and CHANGELOG use the same stable version.
+2. Confirm migrations have upgrade, backup, restore, and rollback guidance.
+3. Confirm the package tarball contains only the intended public files.
+4. Confirm OIDC negative tests, tenant isolation, idempotency conflict, atomic persistence, AuthZEN contract, receipt integrity, and fail-closed tests pass.
+5. Run independent correctness and security reviews.
+6. Create issues for confirmed findings, fix them through the release branch, and close them with evidence.
+7. Open a release PR, wait for required CI, and merge without bypassing checks.
+8. Create annotated tag `v<version>` on the merged commit and publish the GitHub Release with verification notes and SBOM.
 
-1. Confirm `package.json`, `openapi/openapi.yaml`, and `CHANGELOG.md` all reference the target version.
-2. Confirm the root `LICENSE` file contains Apache License 2.0 text and `package.json` uses `license: "Apache-2.0"`.
-3. Confirm OpenAPI response envelopes model success and stable error responses.
-4. Run the required checks.
-5. Commit with issue-closing references.
-6. Create an annotated tag such as `v0.2.0`.
-7. Push `main` and tags.
-8. Create the GitHub Release with verification notes and the Apache-2.0 license statement.
+Only the Commander performs GitHub write operations.
 
 ## Rollback
 
-If a release artifact is incorrect, publish a follow-up patch release. Do not rewrite public tags after consumers may have fetched them.
+Do not rewrite a public tag. If the release artifact is incorrect, mark it clearly and publish a corrected patch release. For runtime rollback, keep the v1 schema when possible. Follow [production.md](./production.md) before using the destructive schema down migration.

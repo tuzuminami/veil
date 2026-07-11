@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Security fixes target the current `main` branch until the first tagged release exists.
+Security fixes target the latest v1.x release and the current `main` branch.
 
 ## Reporting a Vulnerability
 
@@ -18,3 +18,7 @@ Useful reports include:
 ## Security Baseline
 
 VEIL is designed to fail closed for missing auth, tenant mismatch, malformed policy, ambiguous adapter output, and adapter timeout. Public tests cover the core safe-failure paths, but downstream deployments remain responsible for production authentication, secret storage, network policy, and retention controls.
+
+The v1 production runtime validates JWT issuer, audience, signature algorithm, subject, tenant, and scopes; uses tenant-scoped PostgreSQL queries; persists decision evidence atomically; bounds request bodies; and reports PostgreSQL readiness. Deployers remain responsible for TLS termination, OIDC key lifecycle, database encryption and backups, network policy, retention, monitoring, and incident response.
+
+Decision receipt hashes detect mutation when compared with trusted evidence, but they are not digital signatures and do not provide non-repudiation by themselves.
