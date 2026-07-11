@@ -52,12 +52,18 @@ test("bundled server fails closed in production without required configuration",
   assert.doesNotMatch(result.stdout, /VEIL listening/);
 });
 
-test("public server builder fails closed in production without production auth", async () => {
+test("public server builder rejects development persistence and auth in production", async () => {
   const previous = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
   try {
     const root = await import("@tuzuminami/veil");
-    assert.throws(() => root.buildServer(), /production auth adapter/);
+    const productionStore = { healthCheck: async () => true };
+    const productionAuth = { authenticate: async () => ({ tenantId: "tenant-a", actorId: "pep", scopes: [] }) };
+    assert.throws(() => root.buildServer(), /production persistence adapter/);
+    assert.throws(() => root.buildServer({ store: new root.FileVeilStore(".local-data/test.json"), authenticator: productionAuth }), /file persistence is disabled/);
+    assert.throws(() => root.buildServer({ store: productionStore, authenticator: root.createDevelopmentAuthenticator() }), /production auth adapter/);
+    const server = root.buildServer({ store: productionStore, service: {}, authenticator: productionAuth });
+    server.close();
   } finally {
     if (previous === undefined) {
       delete process.env.NODE_ENV;

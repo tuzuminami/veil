@@ -5,16 +5,21 @@ import { VeilService } from "../application/veil-service.js";
 import { VeilError } from "../core/errors.js";
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
+const DEVELOPMENT_AUTHENTICATOR = Symbol("veil.development-authenticator");
 
 export function buildServer(options = {}) {
   const resolved = typeof options === "string" ? { storePath: options } : options;
+  if (process.env.NODE_ENV === "production") {
+    if (resolved.store === undefined || resolved.store instanceof FileVeilStore) {
+      throw new Error("VEIL production runtime requires an explicit production persistence adapter; file persistence is disabled.");
+    }
+    if (resolved.authenticator === undefined || resolved.authenticator[DEVELOPMENT_AUTHENTICATOR] === true) {
+      throw new Error("VEIL production runtime requires a production auth adapter; development auth is disabled.");
+    }
+  }
   const store = resolved.store ?? new FileVeilStore(resolved.storePath ?? ".local-data/veil-store.json");
   const service = resolved.service ?? new VeilService(store, resolved.clock, resolved.newId);
   const authenticator = resolved.authenticator ?? createDevelopmentAuthenticator();
-
-  if (process.env.NODE_ENV === "production" && resolved.authenticator === undefined) {
-    throw new Error("VEIL production runtime requires a production auth adapter; development auth is disabled in production.");
-  }
 
   const server = createServer(async (request, response) => {
     try {
@@ -32,10 +37,12 @@ export function buildServer(options = {}) {
 
 export function createDevelopmentAuthenticator() {
   return {
+    [DEVELOPMENT_AUTHENTICATOR]: true,
     async authenticate({ authorization, tenantId }) {
       if (!authorization?.startsWith("Bearer dev:") || !tenantId) throw new VeilError("AUTHENTICATION_REQUIRED", "Authentication is required.", 401);
       const [, encoded] = authorization.split("Bearer dev:");
-      const [tokenTenant, actorId, scopesRaw] = (encoded ?? "").split(":");
+      const [tokenTenant, actorId, ...scopeParts] = (encoded ?? "").split(":");
+      const scopesRaw = scopeParts.join(":");
       if (!tokenTenant || !actorId || tokenTenant !== tenantId) throw new VeilError("TENANT_SCOPE_DENIED", "Request cannot access this tenant.", 403);
       return { tenantId, actorId, scopes: scopesRaw?.split(",").filter(Boolean) ?? [] };
     }

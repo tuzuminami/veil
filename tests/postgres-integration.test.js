@@ -21,7 +21,7 @@ test("PostgreSQL persists one atomic receipt for concurrent idempotent decisions
     const context = {
       tenantId: "urn:tenant:integration",
       actorId: "integration-test",
-      scopes: ["policy:write", "policy:read", "decision:write", "decision:read", "appeal:write"],
+      scopes: ["policy:write", "policy:read", "decision:write", "decision:context:assert", "decision:read", "appeal:write"],
       correlationId: "integration-correlation"
     };
     const bundle = {

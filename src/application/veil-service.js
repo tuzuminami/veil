@@ -66,12 +66,13 @@ export class VeilService {
     requireScope(context, "decision:write");
     validateDecisionRequest(request);
     assertDecisionRequestSchema(request);
+    if (request.type !== undefined) requireScope(context, "decision:context:assert");
     const idemKey = `decision:${idempotencyKey}`;
     const fingerprint = sha256({ operation: "decision", tenantId: context.tenantId, request });
     const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
     if (cached !== undefined) return cached;
 
-    const policy = await this.getPolicyOrThrow(context.tenantId, request.policyId, request.version);
+    const policy = await this.getDecisionPolicyOrThrow(context.tenantId, request.policyId, request.version);
     const decisionInput = {
       ...request,
       tenantId: context.tenantId,
@@ -194,6 +195,16 @@ export class VeilService {
     const policy = await this.store.getPolicyVersion(tenantId, policyId, version);
     if (policy === undefined) throw new VeilError("RESOURCE_NOT_FOUND", "Policy version was not found.", 404);
     return policy;
+  }
+
+  async getDecisionPolicyOrThrow(tenantId, policyId, requestedVersion) {
+    const getActivePolicyVersion = this.store.getActivePolicyVersion;
+    if (typeof getActivePolicyVersion === "function") {
+      const active = await getActivePolicyVersion.call(this.store, tenantId, policyId);
+      const activeVersion = typeof active === "string" ? active : active?.version;
+      if (activeVersion) return this.getPolicyOrThrow(tenantId, policyId, activeVersion);
+    }
+    return this.getPolicyOrThrow(tenantId, policyId, requestedVersion);
   }
 
   async setActivePolicyBinding(context, policyId, version, auditAction, auditReason) {

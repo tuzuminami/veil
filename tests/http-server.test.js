@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { FileVeilStore } from "../src/adapters/file-store.js";
 import { VeilService } from "../src/application/veil-service.js";
-import { buildServer } from "../src/transport/http-server.js";
+import { buildServer, createDevelopmentAuthenticator } from "../src/transport/http-server.js";
 
 const policy = {
   name: "agent-baseline",
@@ -29,6 +29,14 @@ const policy = {
     }
   ]
 };
+
+test("development auth preserves colon-delimited scope names", async () => {
+  const context = await createDevelopmentAuthenticator().authenticate({
+    authorization: "Bearer dev:tenant-a:pep:decision:write,decision:context:assert",
+    tenantId: "tenant-a"
+  });
+  assert.deepEqual(context.scopes, ["decision:write", "decision:context:assert"]);
+});
 
 test("AuthZEN single evaluation returns a boolean decision, receipt, and echoed request ID", async () => {
   const fixture = await createFixture();
@@ -87,7 +95,7 @@ test("AuthZEN minimal request fails closed and malformed requests return 400", a
 });
 
 test("readiness reflects persistence failure and request bodies are bounded", async () => {
-  const authenticator = { authenticate: async () => ({ tenantId: "tenant-a", actorId: "agent-1", scopes: ["decision:write"] }) };
+  const authenticator = { authenticate: async () => ({ tenantId: "tenant-a", actorId: "agent-1", scopes: ["decision:write", "decision:context:assert"] }) };
   const store = { healthCheck: async () => { throw new Error("offline"); } };
   const server = buildServer({ store, service: {}, authenticator, authZenPolicyId: "policy-main", maxBodyBytes: 8 });
 
@@ -129,11 +137,11 @@ async function createFixture() {
   const dir = await mkdtemp(join(tmpdir(), "veil-http-test-"));
   const store = new FileVeilStore(join(dir, "store.json"));
   const service = new VeilService(store, { now: () => new Date("2026-07-11T00:00:00.000Z") }, deterministicId());
-  const context = { tenantId: "tenant-a", actorId: "admin", scopes: ["policy:write", "decision:write"], correlationId: "setup" };
+  const context = { tenantId: "tenant-a", actorId: "admin", scopes: ["policy:write", "decision:write", "decision:context:assert"], correlationId: "setup" };
   await service.createDraft(context, "policy-main", policy);
   await service.publish(context, "policy-main", "1.0.0", "publish-1");
   await service.bindActivePolicy(context, "policy-main", "1.0.0");
-  const authenticator = { authenticate: async () => ({ tenantId: "tenant-a", actorId: "agent-1", scopes: ["decision:write"] }) };
+  const authenticator = { authenticate: async () => ({ tenantId: "tenant-a", actorId: "agent-1", scopes: ["decision:write", "decision:context:assert"] }) };
   return {
     server: buildServer({ store, service, authenticator, authZenPolicyId: "policy-main" }),
     cleanup: () => rm(dir, { recursive: true, force: true })

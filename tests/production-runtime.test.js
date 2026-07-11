@@ -14,7 +14,7 @@ test("production runtime wires an injected pool and verifier without development
   const runtime = createProductionServer({
     env,
     pool,
-    verifier: async () => ({ payload: { sub: "agent", tenant_id: "tenant-a", exp: 4102444800, scope: "decision:write" } })
+    verifier: async () => ({ payload: { sub: "pep", tenant_id: "tenant-a", exp: 4102444800, scope: "decision:write decision:context:assert" } })
   });
 
   assert.equal(typeof runtime.server.listen, "function");

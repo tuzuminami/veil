@@ -31,6 +31,8 @@ Optional configuration:
 
 Do not put secrets in policy bundles, command history, or repository files. Supply `DATABASE_URL` through the deployment secret manager.
 
+Only trusted policy-enforcement points may receive both `decision:write` and `decision:context:assert`. The latter authorizes the caller to assert agent, resource classification, model, attributes, and estimated cost on behalf of the workload. Do not grant it directly to untrusted agents or end users.
+
 ## Migration
 
 Back up the database, then apply migrations in order:

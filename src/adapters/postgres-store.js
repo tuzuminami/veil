@@ -380,7 +380,6 @@ function decisionFromRow(row) {
     evidenceHash: row.evidence_hash,
     correlationId: row.correlation_id,
     createdAt: row.created_at,
-    createdBy: row.created_by,
     receipt: row.receipt_json === null || row.receipt_json === undefined ? undefined : jsonFromColumn(row.receipt_json)
   };
 }

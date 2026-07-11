@@ -182,6 +182,19 @@ test("malformed pre-execution requests fail closed at the service boundary", asy
   }
 });
 
+test("typed decision context requires a trusted PEP assertion scope", async () => {
+  const fixture = await createFixture();
+  try {
+    const untrusted = { tenantId: "tenant-a", actorId: "direct-agent", scopes: ["decision:write"], correlationId: "corr-untrusted" };
+    await assert.rejects(
+      fixture.service.createDecision(untrusted, typedRequest("model_call", {}), "untrusted-context"),
+      (error) => error instanceof VeilError && error.code === "TENANT_SCOPE_DENIED" && error.status === 403
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("ambiguous classifier output fails closed before rule allow", async () => {
   const fixture = await createFixture();
   try {
@@ -503,6 +516,9 @@ test("active policy bindings resolve omitted versions and support rollback", asy
     await fixture.service.publish(context, "policy-main", "2.0.0", "publish-v2");
 
     await fixture.service.bindActivePolicy(context, "policy-main", "2.0.0");
+    const bypassAttempt = await fixture.service.createDecision(context, typedRequest("model_call", { risk: "medium" }, "1.0.0"), "active-bypass-attempt");
+    assert.equal(bypassAttempt.version, "2.0.0");
+    assert.equal(bypassAttempt.action, "ESCALATE");
     const active = await fixture.service.createDecision(context, typedRequest("model_call", { risk: "medium" }, null), "active-v2");
     assert.equal(active.version, "2.0.0");
     assert.equal(active.action, "ESCALATE");
@@ -596,7 +612,10 @@ test("HTTP boundary returns validation error for malformed JSON", async () => {
 });
 
 function ctx(tenantId, scopes) {
-  return { tenantId, actorId: "tester", scopes, correlationId: "corr-test" };
+  const trustedScopes = scopes.includes("decision:write") && !scopes.includes("decision:context:assert")
+    ? [...scopes, "decision:context:assert"]
+    : scopes;
+  return { tenantId, actorId: "tester", scopes: trustedScopes, correlationId: "corr-test" };
 }
 
 async function createFixture() {

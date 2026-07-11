@@ -143,6 +143,7 @@ The JavaScript client is exported from `@tuzuminami/veil/sdk`. OIDC and PostgreS
 ## Security Model
 
 - Authentication, tenant, and scope decisions are made from verified claims.
+- Typed decision context is accepted only from credentials with both `decision:write` and the trusted-PEP `decision:context:assert` scope.
 - All PostgreSQL resource reads and writes include tenant predicates or tenant-keyed constraints.
 - Decision persistence, audit, outbox, and idempotency records commit atomically.
 - Request bodies are bounded and JSON-only.
