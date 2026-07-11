@@ -216,9 +216,9 @@ export class FileVeilStore {
     return response;
   }
 
-  async load() {
+  async load(path = this.path) {
     try {
-      return JSON.parse(await readFile(this.path, "utf8"));
+      return JSON.parse(await readFile(path, "utf8"));
     } catch (error) {
       if (error.code === "ENOENT") return structuredClone(EMPTY);
       throw error;
@@ -226,22 +226,27 @@ export class FileVeilStore {
   }
 
   async update(mutator) {
-    const queuePath = await canonicalQueuePath(this.path);
-    const previous = UPDATE_QUEUES.get(queuePath) ?? Promise.resolve();
+    const storagePath = await canonicalQueuePath(this.path);
+    const previous = UPDATE_QUEUES.get(storagePath) ?? Promise.resolve();
     const run = previous.then(async () => {
-      const data = await this.load();
+      const data = await this.load(storagePath);
       mutator(data);
-      await mkdir(dirname(this.path), { recursive: true });
-      const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
+      await mkdir(dirname(storagePath), { recursive: true });
+      const temporaryPath = `${storagePath}.${process.pid}.${randomUUID()}.tmp`;
       await writeFile(temporaryPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-      await rename(temporaryPath, this.path);
+      await rename(temporaryPath, storagePath);
     });
-    UPDATE_QUEUES.set(queuePath, run.catch(() => undefined));
+    UPDATE_QUEUES.set(storagePath, run.catch(() => undefined));
     return run;
   }
 }
 
 async function canonicalQueuePath(path) {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   let parent = dirname(path);
   const suffix = [basename(path)];
   while (true) {

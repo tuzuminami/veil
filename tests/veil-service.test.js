@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { FileVeilStore } from "../src/adapters/file-store.js";
 import { VeilService } from "../src/application/veil-service.js";
@@ -386,17 +386,15 @@ test("file-store updates are serialized across instances sharing one path", asyn
   }
 });
 
-test("file-store updates share one queue across symlink path aliases", async () => {
+test("file-store updates share one queue across direct file symlink aliases", async () => {
   const fixture = await createFixture();
-  const alias = `${fixture.path}-alias-dir`;
+  const alias = `${fixture.path}-alias`;
   try {
-    const realDirectory = dirname(fixture.path);
-    await symlink(realDirectory, alias, "dir");
-    const aliasedPath = join(alias, basename(fixture.path));
     const context = ctx("tenant-a", ["policy:write", "decision:write", "decision:read"]);
     await fixture.service.createDraft(context, "policy-main", bundle);
     await fixture.service.publish(context, "policy-main", "1.0.0", "publish-key");
-    const aliasService = new VeilService(new FileVeilStore(aliasedPath));
+    await symlink(fixture.path, alias, "file");
+    const aliasService = new VeilService(new FileVeilStore(alias));
     const request = { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } };
 
     const decisions = await Promise.all([
@@ -406,6 +404,8 @@ test("file-store updates share one queue across symlink path aliases", async () 
     const raw = JSON.parse(await readFile(fixture.path, "utf8"));
     assert.equal(decisions[0].id, decisions[1].id);
     assert.equal(raw.decisions.length, 1);
+    assert.equal(raw.idempotencyRecords.filter((record) => record.key === "decision:symlink-key").length, 1);
+    assert.equal((await lstat(alias)).isSymbolicLink(), true);
   } finally {
     await rm(alias, { force: true });
     await fixture.cleanup();
