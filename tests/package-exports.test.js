@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 test("package exports expose public entry points", async () => {
   const root = await import("@tuzuminami/veil");
@@ -37,5 +37,32 @@ test("package dry-run excludes private material", () => {
   assert.match(output, /LICENSE/);
   for (const marker of denied) {
     assert.doesNotMatch(output, new RegExp(marker));
+  }
+});
+
+test("bundled server fails closed in production without required configuration", () => {
+  const result = spawnSync(process.execPath, ["src/server.js"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, NODE_ENV: "production", PORT: "0" }
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /DATABASE_URL is required in production/);
+  assert.doesNotMatch(result.stdout, /VEIL listening/);
+});
+
+test("public server builder fails closed in production without production auth", async () => {
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  try {
+    const root = await import("@tuzuminami/veil");
+    assert.throws(() => root.buildServer(), /production auth adapter/);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = previous;
+    }
   }
 });

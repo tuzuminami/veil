@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 import { FileVeilStore } from "../src/adapters/file-store.js";
 import { VeilService } from "../src/application/veil-service.js";
 import { VeilError } from "../src/core/errors.js";
+import { verifyDecisionReceipt } from "../src/core/receipt.js";
 import { buildServer } from "../src/transport/http-server.js";
 
 const bundle = {
@@ -111,6 +112,76 @@ test("adapter unknown and timeout fail closed", async () => {
   }
 });
 
+test("typed model and tool pre-execution requests produce policy decisions", async () => {
+  const fixture = await createFixture();
+  try {
+    const context = ctx("tenant-a", ["policy:write", "decision:write"]);
+    await fixture.service.createDraft(context, "policy-main", bundle);
+    await fixture.service.publish(context, "policy-main", "1.0.0", "publish-key");
+
+    const modelDecision = await fixture.service.createDecision(context, typedRequest("model_call", { risk: "low" }), "model-call");
+    const toolDecision = await fixture.service.createDecision(context, typedRequest("tool_call", { message: "request secret" }), "tool-call");
+
+    assert.equal(modelDecision.action, "ALLOW");
+    assert.equal(toolDecision.action, "BLOCK");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("typed policy rules evaluate canonical AI attributes and numeric cost ceilings", async () => {
+  const fixture = await createFixture();
+  try {
+    const context = ctx("tenant-a", ["policy:write", "decision:write"]);
+    const costPolicy = {
+      name: "cost-policy",
+      version: "1.0.0",
+      defaultAction: "BLOCK",
+      rules: [{
+        id: "cost-ceiling",
+        priority: 0,
+        effect: "BLOCK",
+        match: { field: "estimatedCost", operator: "greaterThan", value: 1 },
+        reasonCode: "COST_CEILING_EXCEEDED"
+      }]
+    };
+    await fixture.service.createDraft(context, "cost-policy", costPolicy);
+    await fixture.service.publish(context, "cost-policy", "1.0.0", "publish-cost");
+
+    const decision = await fixture.service.createDecision(
+      context,
+      { ...typedRequest("model_call", {}), policyId: "cost-policy", estimatedCost: 2 },
+      "cost-decision"
+    );
+
+    assert.equal(decision.action, "BLOCK");
+    assert.deepEqual(decision.reasonCodes, ["COST_CEILING_EXCEEDED"]);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("malformed pre-execution requests fail closed at the service boundary", async () => {
+  const fixture = await createFixture();
+  try {
+    const context = ctx("tenant-a", ["decision:write"]);
+    await assert.rejects(
+      fixture.service.createDecision(context, { policyId: "policy-main", input: {}, type: "model_call" }, "invalid-contract"),
+      (error) => error instanceof VeilError && error.code === "VALIDATION_FAILED" && error.details.includes("agent.id is required")
+    );
+    await assert.rejects(
+      fixture.service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: [], type: "other" }, "invalid-type"),
+      (error) => error instanceof VeilError && error.code === "VALIDATION_FAILED" && error.details.includes("type must be model_call or tool_call")
+    );
+    await assert.rejects(
+      fixture.service.createDecision(context, { ...typedRequest("tool_call", {}), dataClassification: "unclassified" }, "invalid-classification"),
+      (error) => error instanceof VeilError && error.code === "VALIDATION_FAILED" && error.details.includes("dataClassification must be public, internal, confidential, or restricted")
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("ambiguous classifier output fails closed before rule allow", async () => {
   const fixture = await createFixture();
   try {
@@ -139,6 +210,40 @@ test("malformed policy fails validation", async () => {
     await assert.rejects(
       fixture.service.createDraft(ctx("tenant-a", ["policy:write"]), "bad-policy", { ...bundle, defaultAction: "ALLOW" }),
       (error) => error instanceof VeilError && error.code === "VALIDATION_FAILED" && error.details.includes("defaultAction must be BLOCK or ESCALATE")
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("policy paths reject prototype traversal segments", async () => {
+  const fixture = await createFixture();
+  try {
+    const unsafe = {
+      ...bundle,
+      rules: [{ ...bundle.rules[0], match: { field: "constructor.prototype.allowed", operator: "equals", value: "yes" } }]
+    };
+    await assert.rejects(
+      fixture.service.createDraft(ctx("tenant-a", ["policy:write"]), "unsafe-policy", unsafe),
+      (error) => error instanceof VeilError && error.details.some((detail) => detail.includes("unsafe path segment"))
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("public JSON Schemas are enforced at the application boundary", async () => {
+  const fixture = await createFixture();
+  try {
+    const invalid = {
+      ...bundle,
+      rules: [{ ...bundle.rules[0], obligations: [1] }]
+    };
+    await assert.rejects(
+      fixture.service.createDraft(ctx("tenant-a", ["policy:write"]), "schema-invalid", invalid),
+      (error) => error instanceof VeilError
+        && error.code === "VALIDATION_FAILED"
+        && error.message === "Policy bundle does not match the public JSON Schema."
     );
   } finally {
     await fixture.cleanup();
@@ -204,17 +309,108 @@ test("tenant and scope boundaries deny access", async () => {
   }
 });
 
-test("decision idempotency returns the original result", async () => {
+test("decision idempotency returns the original result for the same request", async () => {
   const fixture = await createFixture();
   try {
     const service = fixture.service;
     const context = ctx("tenant-a", ["policy:write", "decision:write"]);
     await service.createDraft(context, "policy-main", bundle);
     await service.publish(context, "policy-main", "1.0.0", "publish-key");
-    const first = await service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } }, "same-key");
-    const second = await service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { message: "secret" } }, "same-key");
+    const request = { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } };
+    const first = await service.createDecision(context, request, "same-key");
+    const second = await service.createDecision(context, request, "same-key");
     assert.equal(second.id, first.id);
     assert.equal(second.action, "ALLOW");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("concurrent file-store decisions return the single persisted idempotent response", async () => {
+  const fixture = await createFixture();
+  try {
+    const context = ctx("tenant-a", ["policy:write", "decision:write"]);
+    await fixture.service.createDraft(context, "policy-main", bundle);
+    await fixture.service.publish(context, "policy-main", "1.0.0", "publish-key");
+    const request = { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } };
+
+    const decisions = await Promise.all([
+      fixture.service.createDecision(context, request, "concurrent-key"),
+      fixture.service.createDecision(context, request, "concurrent-key")
+    ]);
+    const raw = JSON.parse(await readFile(fixture.path, "utf8"));
+
+    assert.equal(decisions[0].id, decisions[1].id);
+    assert.equal(raw.decisions.length, 1);
+    assert.equal(raw.auditEvents.filter((event) => event.action === "decision.created").length, 1);
+    assert.equal(raw.outboxEvents.filter((event) => event.eventType === "veil.decision.created.v1").length, 1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("legacy file-store idempotency records fail closed instead of replaying without a fingerprint", async () => {
+  const fixture = await createFixture();
+  try {
+    const context = ctx("tenant-a", ["decision:write"]);
+    await fixture.store.setIdempotency("tenant-a", "tenant-a:decision:legacy-key", { id: "legacy-response" });
+
+    await assert.rejects(
+      fixture.service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } }, "legacy-key"),
+      (error) => error instanceof VeilError && error.code === "IDEMPOTENCY_CONFLICT" && error.status === 409
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("published file-store policies reject concurrent reuse of one key for different operations", async () => {
+  const fixture = await createFixture();
+  try {
+    const context = ctx("tenant-a", ["policy:write"]);
+    await fixture.service.createDraft(context, "policy-a", bundle);
+    await fixture.service.publish(context, "policy-a", "1.0.0", "publish-a");
+    const secondBundle = { ...bundle, name: "second", version: "2.0.0" };
+    await fixture.service.createDraft(context, "policy-b", secondBundle);
+    await fixture.service.publish(context, "policy-b", "2.0.0", "publish-b");
+
+    const results = await Promise.allSettled([
+      fixture.service.publish(context, "policy-a", "1.0.0", "shared-key"),
+      fixture.service.publish(context, "policy-b", "2.0.0", "shared-key")
+    ]);
+
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    const rejected = results.find((result) => result.status === "rejected");
+    assert.equal(rejected.reason.code, "IDEMPOTENCY_CONFLICT");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("idempotency rejects key reuse with different requests", async () => {
+  const fixture = await createFixture();
+  try {
+    const service = fixture.service;
+    const context = ctx("tenant-a", ["policy:write", "decision:write", "appeal:write"]);
+    await service.createDraft(context, "policy-main", bundle);
+    await service.publish(context, "policy-main", "1.0.0", "publish-key");
+    const decision = await service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } }, "decision-key");
+
+    await assert.rejects(
+      service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { message: "secret" } }, "decision-key"),
+      (error) => error instanceof VeilError && error.code === "IDEMPOTENCY_CONFLICT" && error.status === 409
+    );
+    await service.createDraft(context, "policy-secondary", { ...bundle, name: "secondary", version: "2.0.0" });
+    await assert.rejects(
+      service.publish(context, "policy-secondary", "2.0.0", "publish-key"),
+      (error) => error instanceof VeilError && error.code === "IDEMPOTENCY_CONFLICT" && error.status === 409
+    );
+    await assert.rejects(
+      service.createAppeal(context, { decisionId: decision.id, reason: "first" }, "appeal-key").then(() =>
+        service.createAppeal(context, { decisionId: decision.id, reason: "second" }, "appeal-key")
+      ),
+      (error) => error instanceof VeilError && error.code === "IDEMPOTENCY_CONFLICT" && error.status === 409
+    );
   } finally {
     await fixture.cleanup();
   }
@@ -237,6 +433,87 @@ test("audit evidence records policy version and matched rule without raw input",
     assert.equal(decisionAudit.evidenceHash, decision.evidenceHash);
     assert.equal(raw.decisions[0].inputHash, decision.inputHash);
     assert.doesNotMatch(JSON.stringify(raw.auditEvents), /"risk":"low"/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("decision receipts are deterministic and detect tampering", async () => {
+  const fixture = await createFixture();
+  try {
+    const context = ctx("tenant-a", ["policy:write", "decision:write"]);
+    await fixture.service.createDraft(context, "policy-main", bundle);
+    await fixture.service.publish(context, "policy-main", "1.0.0", "publish-key");
+    const decision = await fixture.service.createDecision(context, typedRequest("model_call", { risk: "low" }), "receipt-key");
+
+    assert.equal(verifyDecisionReceipt(decision.receipt), true);
+    assert.equal(verifyDecisionReceipt({ ...decision.receipt, action: "BLOCK" }), false);
+    assert.equal(verifyDecisionReceipt({ ...decision.receipt, untrusted: "injected" }), false);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("active policy bindings resolve omitted versions and support rollback", async () => {
+  const fixture = await createFixture();
+  try {
+    const context = ctx("tenant-a", ["policy:write", "decision:write"]);
+    await fixture.service.createDraft(context, "policy-main", bundle);
+    await fixture.service.publish(context, "policy-main", "1.0.0", "publish-v1");
+    await fixture.service.createDraft(context, "policy-main", { ...bundle, version: "2.0.0", defaultAction: "ESCALATE" });
+    await fixture.service.publish(context, "policy-main", "2.0.0", "publish-v2");
+
+    await fixture.service.bindActivePolicy(context, "policy-main", "2.0.0");
+    const active = await fixture.service.createDecision(context, typedRequest("model_call", { risk: "medium" }, null), "active-v2");
+    assert.equal(active.version, "2.0.0");
+    assert.equal(active.action, "ESCALATE");
+
+    await fixture.service.rollbackActivePolicy(context, "policy-main", "1.0.0");
+    const rolledBack = await fixture.service.createDecision(context, typedRequest("tool_call", { risk: "low" }, null), "active-v1");
+    assert.equal(rolledBack.version, "1.0.0");
+    assert.equal(rolledBack.action, "ALLOW");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("file policy bindings isolate tenant and policy identifiers containing colons", async () => {
+  const fixture = await createFixture();
+  try {
+    await fixture.store.setActivePolicyVersion("tenant:a", "policy", "1.0.0");
+    await fixture.store.setActivePolicyVersion("tenant", "a:policy", "2.0.0");
+
+    assert.equal(await fixture.store.getActivePolicyVersion("tenant:a", "policy"), "1.0.0");
+    assert.equal(await fixture.store.getActivePolicyVersion("tenant", "a:policy"), "2.0.0");
+
+    const raw = JSON.parse(await readFile(fixture.path, "utf8"));
+    assert.equal(raw.activePolicyBindingRecords.length, 2);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("audit events are tenant-scoped and cursor paginated", async () => {
+  const fixture = await createFixture();
+  try {
+    const context = ctx("tenant-a", ["policy:write", "audit:read"]);
+    await fixture.service.createDraft(context, "policy-main", bundle);
+    await fixture.service.createDraft(context, "policy-secondary", { ...bundle, name: "secondary", version: "2.0.0" });
+
+    const first = await fixture.service.listAuditEvents(context, { limit: 1 });
+    const second = await fixture.service.listAuditEvents(context, { limit: 1, cursor: first.nextCursor });
+
+    assert.equal(first.items.length, 1);
+    assert.equal(second.items.length, 1);
+    assert.notEqual(first.items[0].id, second.items[0].id);
+    await assert.rejects(
+      fixture.service.listAuditEvents(ctx("tenant-b", []), { limit: 1 }),
+      (error) => error instanceof VeilError && error.code === "TENANT_SCOPE_DENIED"
+    );
+    await assert.rejects(
+      fixture.service.listAuditEvents(context, { limit: 101 }),
+      (error) => error instanceof VeilError && error.code === "VALIDATION_FAILED"
+    );
   } finally {
     await fixture.cleanup();
   }
@@ -275,8 +552,26 @@ async function createFixture() {
   const path = join(dir, "store.json");
   return {
     path,
-    service: new VeilService(new FileVeilStore(path), { now: () => new Date("2026-01-01T00:00:00.000Z") }, deterministicId()),
+    store: new FileVeilStore(path),
+    get service() {
+      return this._service ??= new VeilService(this.store, { now: () => new Date("2026-01-01T00:00:00.000Z") }, deterministicId());
+    },
     cleanup: async () => rm(dir, { recursive: true, force: true })
+  };
+}
+
+function typedRequest(type, input, version = "1.0.0") {
+  return {
+    policyId: "policy-main",
+    ...(version == null ? {} : { version }),
+    input,
+    type,
+    agent: { id: "support-agent" },
+    resource: { id: type === "model_call" ? "chat-completion" : "crm.lookup", type: "ai-operation", classification: "internal" },
+    dataClassification: "confidential",
+    model: { provider: "openai", id: "gpt-5" },
+    estimatedCost: 0.002,
+    attributes: { purpose: "support" }
   };
 }
 

@@ -27,8 +27,14 @@
           "required": ["field", "operator"],
           "properties": {
             "field": { "type": "string", "minLength": 1 },
-            "operator": { "enum": ["equals", "contains", "absent"] },
-            "value": { "type": "string" }
+            "operator": { "enum": ["equals", "contains", "absent", "greaterThan", "lessThanOrEqual"] },
+            "value": {
+              "anyOf": [
+                { "type": "string" },
+                { "type": "number" },
+                { "type": "boolean" }
+              ]
+            }
           }
         },
         "reasonCode": { "type": "string", "minLength": 1 },

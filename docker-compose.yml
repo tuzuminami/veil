@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: veil
       POSTGRES_USER: veil
-      POSTGRES_PASSWORD: veil_dev_password
+      POSTGRES_PASSWORD: ${VEIL_POSTGRES_PASSWORD:?set VEIL_POSTGRES_PASSWORD for local development}
     ports:
       - "5432:5432"
     volumes:

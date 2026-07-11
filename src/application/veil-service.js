@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { sha256 } from "../core/canonical.js";
 import { VeilError } from "../core/errors.js";
-import { decide, validatePolicyBundle } from "../core/policy.js";
+import { decide, validateDecisionRequest, validatePolicyBundle } from "../core/policy.js";
+import { createDecisionReceipt } from "../core/receipt.js";
+import { assertDecisionRequestSchema, assertPolicyBundleSchema } from "../validation/schemas.js";
 
 export class VeilService {
   constructor(store, clock = { now: () => new Date() }, newId = randomUUID) {
@@ -13,13 +15,14 @@ export class VeilService {
   async createDraft(context, policyId, bundle) {
     requireScope(context, "policy:write");
     validatePolicyBundle(bundle);
+    assertPolicyBundleSchema(bundle);
     const policy = {
       policyId,
       tenantId: context.tenantId,
       version: bundle.version,
       status: "draft",
       bundle,
-      contentHash: sha256({ bundle, compilerVersion: "veil-policy-compiler/0.1.0" }),
+      contentHash: sha256({ bundle, compilerVersion: "veil-policy-compiler/1.0.0" }),
       createdAt: this.clock.now().toISOString(),
       createdBy: context.actorId
     };
@@ -37,37 +40,51 @@ export class VeilService {
 
   async publish(context, policyId, version, idempotencyKey) {
     requireScope(context, "policy:write");
-    const idemKey = `${context.tenantId}:publish:${policyId}:${version}:${idempotencyKey}`;
-    const cached = await this.store.getIdempotency(idemKey);
+    const idemKey = `${context.tenantId}:publish:${idempotencyKey}`;
+    const fingerprint = sha256({ operation: "publish", tenantId: context.tenantId, policyId, version });
+    const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
     if (cached !== undefined) return cached;
 
     const policy = await this.getPolicyOrThrow(context.tenantId, policyId, version);
     if (policy.status === "published") {
-      await this.store.setIdempotency(idemKey, policy);
+      await this.store.setIdempotency(context.tenantId, idemKey, writeIdempotency(fingerprint, policy));
       return policy;
     }
     const published = { ...policy, status: "published", publishedAt: this.clock.now().toISOString() };
+    const idempotencyRecord = writeIdempotency(fingerprint, published);
+    const auditEvent = this.createAuditEvent(context, "policy.version.published", "policy-version", `${policyId}@${version}`, "published", published.contentHash);
+    if (typeof this.store.commitPolicyPublish === "function") {
+      return this.store.commitPolicyPublish({ policy: published, auditEvent, idempotencyKey: idemKey, idempotencyRecord });
+    }
     await this.store.savePolicyVersion(published);
-    await this.store.setIdempotency(idemKey, published);
-    await this.audit(context, "policy.version.published", "policy-version", `${policyId}@${version}`, "published", published.contentHash);
+    await this.store.setIdempotency(context.tenantId, idemKey, idempotencyRecord);
+    await this.store.appendAudit(auditEvent);
     return published;
   }
 
   async createDecision(context, request, idempotencyKey) {
     requireScope(context, "decision:write");
+    validateDecisionRequest(request);
+    assertDecisionRequestSchema(request);
     const idemKey = `${context.tenantId}:decision:${idempotencyKey}`;
-    const cached = await this.store.getIdempotency(idemKey);
+    const fingerprint = sha256({ operation: "decision", tenantId: context.tenantId, request });
+    const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
     if (cached !== undefined) return cached;
 
     const policy = await this.getPolicyOrThrow(context.tenantId, request.policyId, request.version);
-    const decisionInput = { ...request, tenantId: context.tenantId, correlationId: context.correlationId };
+    const decisionInput = {
+      ...request,
+      tenantId: context.tenantId,
+      correlationId: context.correlationId,
+      input: policyInput(request)
+    };
     const result = decide(policy, decisionInput);
-    const inputHash = sha256(request.input);
+    const inputHash = sha256(decisionInput.input);
     const decision = {
       id: this.newId(),
       tenantId: context.tenantId,
       policyId: request.policyId,
-      version: request.version,
+      version: policy.version,
       action: result.action,
       reasonCodes: result.reasonCodes,
       obligations: result.obligations,
@@ -77,17 +94,38 @@ export class VeilService {
       correlationId: context.correlationId,
       createdAt: this.clock.now().toISOString()
     };
-    await this.store.saveDecision(decision);
-    await this.store.setIdempotency(idemKey, decision);
-    await this.audit(context, "decision.created", "decision", decision.id, decision.reasonCodes.join(","), decision.evidenceHash);
-    await this.outbox(context, "veil.decision.created.v1", decision.id, { action: decision.action, policyId: decision.policyId, version: decision.version });
+    decision.receipt = createDecisionReceipt(decision, policy.contentHash);
+    const idempotencyRecord = writeIdempotency(fingerprint, decision);
+    const auditEvent = this.createAuditEvent(context, "decision.created", "decision", decision.id, decision.reasonCodes.join(","), decision.evidenceHash);
+    const outboxEvent = this.createOutboxEvent(context, "veil.decision.created.v1", decision.id, {
+      action: decision.action,
+      policyId: decision.policyId,
+      version: decision.version
+    });
+    if (typeof this.store.commitDecision === "function") {
+      return this.store.commitDecision({ decision, auditEvent, outboxEvent, idempotencyKey: idemKey, idempotencyRecord });
+    } else {
+      await this.store.saveDecision(decision);
+      await this.store.setIdempotency(context.tenantId, idemKey, idempotencyRecord);
+      await this.store.appendAudit(auditEvent);
+      if (typeof this.store.appendOutbox === "function") await this.store.appendOutbox(outboxEvent);
+    }
     return decision;
+  }
+
+  async bindActivePolicy(context, policyId, version) {
+    return this.setActivePolicyBinding(context, policyId, version, "policy.active.bound", "active version");
+  }
+
+  async rollbackActivePolicy(context, policyId, version) {
+    return this.setActivePolicyBinding(context, policyId, version, "policy.active.rolled_back", "rolled back to version");
   }
 
   async createAppeal(context, request, idempotencyKey) {
     requireScope(context, "appeal:write");
     const idemKey = `${context.tenantId}:appeal:${idempotencyKey}`;
-    const cached = await this.store.getIdempotency(idemKey);
+    const fingerprint = sha256({ operation: "appeal", tenantId: context.tenantId, request });
+    const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
     if (cached !== undefined) return cached;
     if (typeof request.decisionId !== "string" || request.decisionId.length === 0) {
       throw new VeilError("VALIDATION_FAILED", "decisionId is required.", 422);
@@ -104,10 +142,19 @@ export class VeilService {
       createdAt: this.clock.now().toISOString(),
       createdBy: context.actorId
     };
+    const idempotencyRecord = writeIdempotency(fingerprint, appeal);
+    const auditEvent = this.createAuditEvent(context, "appeal.created", "appeal", appeal.id, "appeal opened", sha256(appeal));
+    const outboxEvent = this.createOutboxEvent(context, "veil.appeal.created.v1", appeal.id, {
+      decisionId: appeal.decisionId,
+      status: appeal.status
+    });
+    if (typeof this.store.commitAppeal === "function") {
+      return this.store.commitAppeal({ appeal, auditEvent, outboxEvent, idempotencyKey: idemKey, idempotencyRecord });
+    }
     await this.store.saveAppeal(appeal);
-    await this.store.setIdempotency(idemKey, appeal);
-    await this.audit(context, "appeal.created", "appeal", appeal.id, "appeal opened", sha256(appeal));
-    await this.outbox(context, "veil.appeal.created.v1", appeal.id, { decisionId: appeal.decisionId, status: appeal.status });
+    await this.store.setIdempotency(context.tenantId, idemKey, idempotencyRecord);
+    await this.store.appendAudit(auditEvent);
+    if (typeof this.store.appendOutbox === "function") await this.store.appendOutbox(outboxEvent);
     return appeal;
   }
 
@@ -115,17 +162,70 @@ export class VeilService {
     requireScope(context, "decision:read");
     const decision = await this.store.getDecision(context.tenantId, decisionId);
     if (decision === undefined) throw new VeilError("RESOURCE_NOT_FOUND", "Decision was not found.", 404);
-    return decision;
+    return decision.receipt === undefined ? { ...decision, legacy: true } : decision;
+  }
+
+  async listAuditEvents(context, { limit = 50, cursor } = {}) {
+    requireScope(context, "audit:read");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new VeilError("VALIDATION_FAILED", "limit must be an integer between 1 and 100.", 422);
+    }
+    const decodedCursor = cursor === undefined ? undefined : decodeAuditCursor(cursor);
+    const events = await this.store.listAuditEvents(context.tenantId, { limit: limit + 1, cursor: decodedCursor });
+    const hasMore = events.length > limit;
+    const items = events.slice(0, limit);
+    const last = items.at(-1);
+    return {
+      items,
+      nextCursor: hasMore && last ? encodeAuditCursor(last) : undefined
+    };
   }
 
   async getPolicyOrThrow(tenantId, policyId, version) {
+    if (version === undefined) {
+      const getActivePolicyVersion = this.store.getActivePolicyVersion;
+      if (typeof getActivePolicyVersion !== "function") {
+        throw new VeilError("STORE_CAPABILITY_UNAVAILABLE", "Store does not support active policy bindings.", 501);
+      }
+      const active = await getActivePolicyVersion.call(this.store, tenantId, policyId);
+      version = typeof active === "string" ? active : active?.version;
+      if (!version) throw new VeilError("RESOURCE_NOT_FOUND", "Active policy version was not found.", 404);
+    }
     const policy = await this.store.getPolicyVersion(tenantId, policyId, version);
     if (policy === undefined) throw new VeilError("RESOURCE_NOT_FOUND", "Policy version was not found.", 404);
     return policy;
   }
 
+  async setActivePolicyBinding(context, policyId, version, auditAction, auditReason) {
+    requireScope(context, "policy:write");
+    const policy = await this.getPolicyOrThrow(context.tenantId, policyId, version);
+    if (policy.status !== "published") {
+      throw new VeilError("VALIDATION_FAILED", "Only published policy versions can be active.", 422);
+    }
+    const setActivePolicyVersion = this.store.setActivePolicyVersion;
+    if (typeof setActivePolicyVersion !== "function") {
+      throw new VeilError("STORE_CAPABILITY_UNAVAILABLE", "Store does not support active policy bindings.", 501);
+    }
+    const metadata = {
+      actorId: context.actorId,
+      activatedAt: this.clock.now().toISOString()
+    };
+    const auditEvent = this.createAuditEvent(context, auditAction, "policy", policyId, `${auditReason} ${policy.version}`, policy.contentHash);
+    if (typeof this.store.commitPolicyBinding === "function") {
+      await this.store.commitPolicyBinding({ tenantId: context.tenantId, policyId, version: policy.version, metadata, auditEvent });
+    } else {
+      await setActivePolicyVersion.call(this.store, context.tenantId, policyId, policy.version, metadata);
+      await this.store.appendAudit(auditEvent);
+    }
+    return policy;
+  }
+
   async audit(context, action, resourceType, resourceId, reason, evidenceHash) {
-    await this.store.appendAudit({
+    await this.store.appendAudit(this.createAuditEvent(context, action, resourceType, resourceId, reason, evidenceHash));
+  }
+
+  createAuditEvent(context, action, resourceType, resourceId, reason, evidenceHash) {
+    return {
       id: this.newId(),
       tenantId: context.tenantId,
       actorId: context.actorId,
@@ -136,12 +236,16 @@ export class VeilService {
       reason,
       evidenceHash,
       createdAt: this.clock.now().toISOString()
-    });
+    };
   }
 
   async outbox(context, eventType, resourceId, payload) {
     if (typeof this.store.appendOutbox !== "function") return;
-    await this.store.appendOutbox({
+    await this.store.appendOutbox(this.createOutboxEvent(context, eventType, resourceId, payload));
+  }
+
+  createOutboxEvent(context, eventType, resourceId, payload) {
+    return {
       id: this.newId(),
       eventType,
       tenantId: context.tenantId,
@@ -149,7 +253,35 @@ export class VeilService {
       correlationId: context.correlationId,
       payload,
       occurredAt: this.clock.now().toISOString()
-    });
+    };
+  }
+}
+
+function policyInput(request) {
+  if (request.type === undefined) return request.input;
+  return {
+    ...request.input,
+    type: request.type,
+    agent: request.agent,
+    resource: request.resource,
+    dataClassification: request.dataClassification,
+    model: request.model,
+    estimatedCost: request.estimatedCost,
+    attributes: request.attributes
+  };
+}
+
+function encodeAuditCursor(event) {
+  return Buffer.from(JSON.stringify({ createdAt: event.createdAt, id: event.id }), "utf8").toString("base64url");
+}
+
+function decodeAuditCursor(cursor) {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (typeof value.createdAt !== "string" || typeof value.id !== "string") throw new Error("invalid cursor");
+    return value;
+  } catch {
+    throw new VeilError("VALIDATION_FAILED", "cursor is invalid.", 422);
   }
 }
 
@@ -157,4 +289,19 @@ function requireScope(context, scope) {
   if (!context.scopes.includes(scope)) {
     throw new VeilError("TENANT_SCOPE_DENIED", "Request cannot access this operation.", 403);
   }
+}
+
+function readIdempotency(record, fingerprint) {
+  if (record === undefined) return undefined;
+  if (record?.legacy === true || record?.fingerprint === undefined || record?.response === undefined) {
+    throw new VeilError("IDEMPOTENCY_CONFLICT", "Legacy idempotency records cannot be safely replayed.", 409);
+  }
+  if (record.fingerprint !== fingerprint) {
+    throw new VeilError("IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used with a different request.", 409);
+  }
+  return record.response;
+}
+
+function writeIdempotency(fingerprint, response) {
+  return { fingerprint, response };
 }
