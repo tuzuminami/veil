@@ -515,8 +515,12 @@ components:
       properties:
         name:
           type: string
+          minLength: 1
+          pattern: ".*\\S.*"
         version:
           type: string
+          minLength: 1
+          pattern: ".*\\S.*"
         defaultAction:
           enum: [BLOCK, ESCALATE]
         rules:
@@ -530,6 +534,8 @@ components:
       properties:
         id:
           type: string
+          minLength: 1
+          pattern: ".*\\S.*"
         priority:
           type: integer
           minimum: 0
@@ -541,6 +547,8 @@ components:
           properties:
             field:
               type: string
+              minLength: 1
+              pattern: ".*\\S.*"
             operator:
               enum: [equals, contains, absent, greaterThan, lessThanOrEqual]
             value:
@@ -550,6 +558,8 @@ components:
                 - type: boolean
         reasonCode:
           type: string
+          minLength: 1
+          pattern: ".*\\S.*"
         obligations:
           type: array
           items:

@@ -63,10 +63,16 @@ export class PostgresVeilStore {
   }
 
   async getIdempotency(tenantId, key) {
-    const result = await this.pool.query(
+    let result = await this.pool.query(
       "SELECT response_json, fingerprint FROM idempotency_records WHERE tenant_id = $1 AND idempotency_key = $2",
       [tenantId, key]
     );
+    if (result.rows[0] === undefined) {
+      result = await this.pool.query(
+        "SELECT response_json, fingerprint FROM idempotency_records WHERE tenant_id = $1 AND idempotency_key = $2",
+        [tenantId, `${tenantId}:${key}`]
+      );
+    }
     if (result.rows[0] === undefined) return undefined;
     const response = jsonFromColumn(result.rows[0].response_json);
     return result.rows[0].fingerprint === null ? { legacy: true, response } : { fingerprint: result.rows[0].fingerprint, response };

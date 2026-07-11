@@ -349,11 +349,50 @@ test("concurrent file-store decisions return the single persisted idempotent res
   }
 });
 
+test("file-store updates are serialized across instances sharing one path", async () => {
+  const fixture = await createFixture();
+  try {
+    const context = ctx("tenant-a", ["policy:write", "decision:write", "decision:read"]);
+    await fixture.service.createDraft(context, "policy-main", bundle);
+    await fixture.service.publish(context, "policy-main", "1.0.0", "publish-key");
+    const secondService = new VeilService(new FileVeilStore(fixture.path));
+    const request = { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } };
+
+    const decisions = await Promise.all([
+      fixture.service.createDecision(context, request, "shared-path-key"),
+      secondService.createDecision(context, request, "shared-path-key")
+    ]);
+    const raw = JSON.parse(await readFile(fixture.path, "utf8"));
+
+    assert.equal(decisions[0].id, decisions[1].id);
+    assert.equal(raw.decisions.length, 1);
+    assert.equal(raw.idempotencyRecords.filter((record) => record.tenantId === "tenant-a" && record.key === "decision:shared-path-key").length, 1);
+    assert.equal((await secondService.getDecision(context, decisions[0].id)).receipt.receiptHash, decisions[0].receipt.receiptHash);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("file idempotency isolates colliding tenant and client-key tuples", async () => {
+  const fixture = await createFixture();
+  try {
+    await fixture.store.setIdempotency("a:b", "decision:c", { fingerprint: "first", response: { id: "first" } });
+    await fixture.store.setIdempotency("a", "decision:b:c", { fingerprint: "second", response: { id: "second" } });
+
+    assert.equal((await fixture.store.getIdempotency("a:b", "decision:c")).response.id, "first");
+    assert.equal((await fixture.store.getIdempotency("a", "decision:b:c")).response.id, "second");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("legacy file-store idempotency records fail closed instead of replaying without a fingerprint", async () => {
   const fixture = await createFixture();
   try {
     const context = ctx("tenant-a", ["decision:write"]);
-    await fixture.store.setIdempotency("tenant-a", "tenant-a:decision:legacy-key", { id: "legacy-response" });
+    await fixture.store.update((data) => {
+      data.idempotency["tenant-a:decision:legacy-key"] = { id: "legacy-response" };
+    });
 
     await assert.rejects(
       fixture.service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } }, "legacy-key"),
@@ -488,6 +527,19 @@ test("file policy bindings isolate tenant and policy identifiers containing colo
 
     const raw = JSON.parse(await readFile(fixture.path, "utf8"));
     assert.equal(raw.activePolicyBindingRecords.length, 2);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("file policy bindings read legacy flat binding files", async () => {
+  const fixture = await createFixture();
+  try {
+    await fixture.store.update((data) => {
+      data.activePolicyBindings["tenant-a:policy-main"] = { version: "0.2.0" };
+    });
+
+    assert.equal(await fixture.store.getActivePolicyVersion("tenant-a", "policy-main"), "0.2.0");
   } finally {
     await fixture.cleanup();
   }

@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { VeilError } from "../core/errors.js";
+
+const UPDATE_QUEUES = new Map();
 
 const EMPTY = {
   policies: [],
@@ -9,14 +12,14 @@ const EMPTY = {
   appeals: [],
   outboxEvents: [],
   idempotency: {},
+  idempotencyRecords: [],
   activePolicyBindings: {},
   activePolicyBindingRecords: []
 };
 
 export class FileVeilStore {
   constructor(path) {
-    this.path = path;
-    this.updateQueue = Promise.resolve();
+    this.path = resolve(path);
   }
 
   async getPolicyVersion(tenantId, policyId, version) {
@@ -102,17 +105,17 @@ export class FileVeilStore {
 
   async getIdempotency(tenantId, key) {
     const data = await this.load();
-    return data.idempotency[key];
+    return findIdempotency(data, tenantId, key);
   }
 
   async setIdempotency(tenantId, key, value) {
     await this.update((data) => {
-      const existing = data.idempotency[key];
+      const existing = findIdempotency(data, tenantId, key);
       if (existing !== undefined) {
         if (existing.fingerprint !== value?.fingerprint) throw idempotencyConflict();
         return;
       }
-      data.idempotency[key] = value;
+      saveIdempotency(data, tenantId, key, value);
     });
   }
 
@@ -135,7 +138,7 @@ export class FileVeilStore {
   async commitDecision({ decision, auditEvent, outboxEvent, idempotencyKey, idempotencyRecord }) {
     let response = decision;
     await this.update((data) => {
-      const existing = data.idempotency[idempotencyKey];
+      const existing = findIdempotency(data, decision.tenantId, idempotencyKey);
       if (existing !== undefined && existing.fingerprint !== idempotencyRecord.fingerprint) {
         throw idempotencyConflict();
       }
@@ -146,7 +149,7 @@ export class FileVeilStore {
       data.decisions.push(decision);
       data.auditEvents.push(auditEvent);
       data.outboxEvents.push(outboxEvent);
-      data.idempotency[idempotencyKey] = idempotencyRecord;
+      saveIdempotency(data, decision.tenantId, idempotencyKey, idempotencyRecord);
     });
     return response;
   }
@@ -154,7 +157,7 @@ export class FileVeilStore {
   async commitPolicyPublish({ policy, auditEvent, idempotencyKey, idempotencyRecord }) {
     let response = policy;
     await this.update((data) => {
-      const existingIdempotency = data.idempotency[idempotencyKey];
+      const existingIdempotency = findIdempotency(data, policy.tenantId, idempotencyKey);
       if (existingIdempotency !== undefined) {
         if (existingIdempotency.fingerprint !== idempotencyRecord.fingerprint) throw idempotencyConflict();
         response = existingIdempotency.response;
@@ -168,7 +171,7 @@ export class FileVeilStore {
       if (existing.status === "published" && existing.contentHash !== policy.contentHash) throw new Error("published policy is immutable");
       data.policies[existingIndex] = policy;
       data.auditEvents.push(auditEvent);
-      data.idempotency[idempotencyKey] = idempotencyRecord;
+      saveIdempotency(data, policy.tenantId, idempotencyKey, idempotencyRecord);
     });
     return response;
   }
@@ -195,7 +198,7 @@ export class FileVeilStore {
   async commitAppeal({ appeal, auditEvent, outboxEvent, idempotencyKey, idempotencyRecord }) {
     let response = appeal;
     await this.update((data) => {
-      const existing = data.idempotency[idempotencyKey];
+      const existing = findIdempotency(data, appeal.tenantId, idempotencyKey);
       if (existing !== undefined) {
         if (existing.fingerprint !== idempotencyRecord.fingerprint) throw idempotencyConflict();
         response = existing.response;
@@ -204,7 +207,7 @@ export class FileVeilStore {
       data.appeals.push(appeal);
       data.auditEvents.push(auditEvent);
       data.outboxEvents.push(outboxEvent);
-      data.idempotency[idempotencyKey] = idempotencyRecord;
+      saveIdempotency(data, appeal.tenantId, idempotencyKey, idempotencyRecord);
     });
     return response;
   }
@@ -219,17 +222,29 @@ export class FileVeilStore {
   }
 
   async update(mutator) {
-    const run = this.updateQueue.then(async () => {
+    const previous = UPDATE_QUEUES.get(this.path) ?? Promise.resolve();
+    const run = previous.then(async () => {
       const data = await this.load();
       mutator(data);
       await mkdir(dirname(this.path), { recursive: true });
-      const temporaryPath = `${this.path}.${process.pid}.tmp`;
+      const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
       await writeFile(temporaryPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
       await rename(temporaryPath, this.path);
     });
-    this.updateQueue = run.catch(() => undefined);
+    UPDATE_QUEUES.set(this.path, run.catch(() => undefined));
     return run;
   }
+}
+
+function findIdempotency(data, tenantId, key) {
+  const record = data.idempotencyRecords?.find((item) => item.tenantId === tenantId && item.key === key);
+  if (record !== undefined) return { fingerprint: record.fingerprint, response: record.response };
+  return data.idempotency?.[`${tenantId}:${key}`] ?? data.idempotency?.[key];
+}
+
+function saveIdempotency(data, tenantId, key, value) {
+  data.idempotencyRecords ??= [];
+  data.idempotencyRecords.push({ tenantId, key, fingerprint: value?.fingerprint, response: value?.response });
 }
 
 function idempotencyConflict() {

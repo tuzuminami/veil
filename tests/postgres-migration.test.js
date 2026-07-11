@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import Ajv2020 from "ajv/dist/2020.js";
 import { Client } from "pg";
+import YAML from "yaml";
+import { PostgresVeilStore } from "../src/adapters/postgres-store.js";
+import { VeilService } from "../src/application/veil-service.js";
 
 const databaseUrl = process.env.VEIL_TEST_DATABASE_URL;
+const openapiSchemas = YAML.parse(readFileSync("openapi/openapi.yaml", "utf8")).components.schemas;
 
 test("PostgreSQL v1 migrations upgrade and down cleanly", { skip: databaseUrl === undefined }, async () => {
   const client = new Client({ connectionString: databaseUrl });
@@ -46,6 +52,15 @@ test("PostgreSQL v1 migrations upgrade and down cleanly", { skip: databaseUrl ==
     assert.equal(await indexExists(client, "audit_events_tenant_created_idx"), true);
     const legacy = await client.query("SELECT receipt_json FROM decisions WHERE decision_id = 'legacy-decision'");
     assert.equal(legacy.rows[0].receipt_json, null);
+    const service = new VeilService(new PostgresVeilStore(client));
+    const legacyDecision = await service.getDecision({
+      tenantId: "tenant-a",
+      actorId: "migration-test",
+      scopes: ["decision:read"],
+      correlationId: "migration-correlation"
+    }, "legacy-decision");
+    assert.equal(legacyDecision.legacy, true);
+    assert.equal(validateOpenApiDecision(legacyDecision), true);
     const legacyIdempotency = await client.query("SELECT fingerprint FROM idempotency_records WHERE idempotency_key = 'tenant-a:decision:legacy-key'");
     assert.equal(legacyIdempotency.rows[0].fingerprint, null);
 
@@ -63,7 +78,7 @@ test("PostgreSQL v1 migrations upgrade and down cleanly", { skip: databaseUrl ==
   }
 });
 
-test("a failing DDL transaction leaves no sentinel object", { skip: databaseUrl === undefined }, async () => {
+test("a failing v1 migration rolls back its preceding DDL", { skip: databaseUrl === undefined }, async () => {
   const client = new Client({ connectionString: databaseUrl });
   const schema = `veil_migration_${randomUUID().replaceAll("-", "")}`;
 
@@ -72,15 +87,18 @@ test("a failing DDL transaction leaves no sentinel object", { skip: databaseUrl 
     await client.query(`CREATE SCHEMA "${schema}"`);
     await client.query("SELECT set_config('search_path', $1, false)", [`"${schema}"`]);
 
-    await client.query("BEGIN");
-    await client.query("CREATE TABLE ddl_sentinel (id INTEGER PRIMARY KEY)");
+    await client.query(await readFile("migrations/001_init.sql", "utf8"));
+    const migration = await readFile("migrations/002_v1.sql", "utf8");
+    const failingMigration = migration.replace("ALTER TABLE decisions", "ALTER TABLE deliberately_missing_decisions");
     await assert.rejects(
-      client.query("ALTER TABLE deliberately_missing_table ADD COLUMN should_not_exist TEXT"),
-      /deliberately_missing_table/
+      client.query(failingMigration),
+      /deliberately_missing_decisions/
     );
     await client.query("ROLLBACK");
 
-    assert.equal(await tableExists(client, "ddl_sentinel"), false);
+    assert.equal(await tableExists(client, "active_policy_bindings"), false);
+    assert.equal(await columnExists(client, "idempotency_records", "fingerprint"), false);
+    assert.equal(await columnExists(client, "decisions", "receipt_json"), false);
   } finally {
     await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     await client.end();
@@ -106,4 +124,20 @@ async function indexExists(client, index) {
     [index]
   );
   return result.rows[0].exists;
+}
+
+function validateOpenApiDecision(decision) {
+  const dereference = (schema) => {
+    if (schema?.$ref) return dereference(openapiSchemas[schema.$ref.split("/").at(-1)]);
+    if (Array.isArray(schema)) return schema.map(dereference);
+    if (schema && typeof schema === "object") {
+      return Object.fromEntries(Object.entries(schema).map(([key, value]) => [key, dereference(value)]));
+    }
+    return schema;
+  };
+  const validate = new Ajv2020({ strict: true, validateFormats: false }).compile({
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    ...dereference(openapiSchemas.Decision)
+  });
+  return validate(decision);
 }

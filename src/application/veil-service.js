@@ -40,7 +40,7 @@ export class VeilService {
 
   async publish(context, policyId, version, idempotencyKey) {
     requireScope(context, "policy:write");
-    const idemKey = `${context.tenantId}:publish:${idempotencyKey}`;
+    const idemKey = `publish:${idempotencyKey}`;
     const fingerprint = sha256({ operation: "publish", tenantId: context.tenantId, policyId, version });
     const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
     if (cached !== undefined) return cached;
@@ -66,7 +66,7 @@ export class VeilService {
     requireScope(context, "decision:write");
     validateDecisionRequest(request);
     assertDecisionRequestSchema(request);
-    const idemKey = `${context.tenantId}:decision:${idempotencyKey}`;
+    const idemKey = `decision:${idempotencyKey}`;
     const fingerprint = sha256({ operation: "decision", tenantId: context.tenantId, request });
     const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
     if (cached !== undefined) return cached;
@@ -123,7 +123,7 @@ export class VeilService {
 
   async createAppeal(context, request, idempotencyKey) {
     requireScope(context, "appeal:write");
-    const idemKey = `${context.tenantId}:appeal:${idempotencyKey}`;
+    const idemKey = `appeal:${idempotencyKey}`;
     const fingerprint = sha256({ operation: "appeal", tenantId: context.tenantId, request });
     const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
     if (cached !== undefined) return cached;

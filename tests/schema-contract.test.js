@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import Ajv2020 from "ajv/dist/2020.js";
 import YAML from "yaml";
-import { validateDecisionRequest } from "../src/core/policy.js";
+import { validateDecisionRequest, validatePolicyBundle } from "../src/core/policy.js";
 
 const decisionRequestSchema = JSON.parse(readFileSync("schemas/decision-request.schema.json", "utf8"));
 const openapi = YAML.parse(readFileSync("openapi/openapi.yaml", "utf8"));
@@ -34,6 +34,42 @@ const typedRequest = {
   estimatedCost: 0.002,
   attributes: { purpose: "support" }
 };
+
+const policyBundle = {
+  name: "support-policy",
+  version: "1.0.0",
+  defaultAction: "BLOCK",
+  rules: [{
+    id: "allow-low-risk",
+    priority: 10,
+    effect: "ALLOW",
+    match: { field: "risk", operator: "equals", value: "low" },
+    reasonCode: "LOW_RISK_ALLOWED"
+  }]
+};
+
+const invalidWhitespacePolicyBundles = [
+  ["name"],
+  ["version"],
+  ["rules", 0, "id"],
+  ["rules", 0, "match", "field"],
+  ["rules", 0, "reasonCode"]
+].map((path) => {
+  const value = structuredClone(policyBundle);
+  let target = value;
+  for (const key of path.slice(0, -1)) target = target[key];
+  target[path.at(-1)] = "   ";
+  return value;
+});
+
+function dereferenceOpenApi(schema, schemas) {
+  if (schema?.$ref) return dereferenceOpenApi(schemas[schema.$ref.split("/").at(-1)], schemas);
+  if (Array.isArray(schema)) return schema.map((entry) => dereferenceOpenApi(entry, schemas));
+  if (schema && typeof schema === "object") {
+    return Object.fromEntries(Object.entries(schema).map(([key, value]) => [key, dereferenceOpenApi(value, schemas)]));
+  }
+  return schema;
+}
 
 test("DecisionRequest accepts legacy and fully typed contracts only", () => {
   const validate = new Ajv2020({ allErrors: true, strict: true }).compile(decisionRequestSchema);
@@ -140,4 +176,20 @@ test("Decision distinguishes legacy responses from receipt-bearing current respo
   assert.equal(validate({ ...currentDecision, legacy: true }), false);
   const { receipt, ...receiptlessCurrent } = currentDecision;
   assert.equal(validate(receiptlessCurrent), false);
+});
+
+test("PolicyBundle rejects whitespace-only required strings across contracts", () => {
+  const validateJsonSchema = new Ajv2020({ allErrors: true, strict: true }).compile(
+    JSON.parse(readFileSync("schemas/policy-bundle.schema.json", "utf8"))
+  );
+  const validateOpenApi = new Ajv2020({ allErrors: true, strict: true }).compile({
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    ...dereferenceOpenApi(openapi.components.schemas.PolicyBundleDraft, openapi.components.schemas)
+  });
+
+  for (const invalid of invalidWhitespacePolicyBundles) {
+    assert.throws(() => validatePolicyBundle(invalid), /Policy bundle is invalid/);
+    assert.equal(validateJsonSchema(invalid), false);
+    assert.equal(validateOpenApi(invalid), false);
+  }
 });
