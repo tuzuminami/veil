@@ -105,6 +105,12 @@ export class PostgresVeilStore {
            WHERE table_schema = current_schema()
              AND table_name = 'decisions'
              AND column_name = 'receipt_json'
+         )
+         AND EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_schema = current_schema()
+             AND table_name = 'audit_events'
+             AND column_name = 'request_id'
          ) AS ready`
     );
     if (result.rows[0]?.ready !== true) throw new Error("VEIL PostgreSQL schema is not ready");
@@ -115,15 +121,17 @@ export class PostgresVeilStore {
     await this.pool.end();
   }
 
-  async commitDecision({ decision, auditEvent, outboxEvent, idempotencyKey, idempotencyRecord }) {
+  async commitDecision({ decision, auditEvent, idempotencyReplayAuditEvent, outboxEvent, idempotencyKey, idempotencyRecord }) {
     const tenantId = decision.tenantId;
     assertTenant(tenantId, auditEvent, "auditEvent");
+    if (idempotencyReplayAuditEvent !== undefined) assertTenant(tenantId, idempotencyReplayAuditEvent, "idempotencyReplayAuditEvent");
     assertTenant(tenantId, outboxEvent, "outboxEvent");
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       const reservation = await upsertIdempotency(client, tenantId, idempotencyKey, idempotencyRecord);
       if (!reservation.inserted) {
+        if (idempotencyReplayAuditEvent !== undefined) await insertAudit(client, { ...idempotencyReplayAuditEvent, resourceId: reservation.response.id });
         await client.query("COMMIT");
         return reservation.response;
       }
@@ -144,13 +152,15 @@ export class PostgresVeilStore {
     }
   }
 
-  async commitPolicyPublish({ policy, auditEvent, idempotencyKey, idempotencyRecord }) {
+  async commitPolicyPublish({ policy, auditEvent, idempotencyReplayAuditEvent, idempotencyKey, idempotencyRecord }) {
     assertTenant(policy.tenantId, auditEvent, "auditEvent");
+    if (idempotencyReplayAuditEvent !== undefined) assertTenant(policy.tenantId, idempotencyReplayAuditEvent, "idempotencyReplayAuditEvent");
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       const reservation = await upsertIdempotency(client, policy.tenantId, idempotencyKey, idempotencyRecord);
       if (!reservation.inserted) {
+        if (idempotencyReplayAuditEvent !== undefined) await insertAudit(client, idempotencyReplayAuditEvent);
         await client.query("COMMIT");
         return reservation.response;
       }
@@ -182,14 +192,16 @@ export class PostgresVeilStore {
     }
   }
 
-  async commitAppeal({ appeal, auditEvent, outboxEvent, idempotencyKey, idempotencyRecord }) {
+  async commitAppeal({ appeal, auditEvent, idempotencyReplayAuditEvent, outboxEvent, idempotencyKey, idempotencyRecord }) {
     assertTenant(appeal.tenantId, auditEvent, "auditEvent");
+    if (idempotencyReplayAuditEvent !== undefined) assertTenant(appeal.tenantId, idempotencyReplayAuditEvent, "idempotencyReplayAuditEvent");
     assertTenant(appeal.tenantId, outboxEvent, "outboxEvent");
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       const reservation = await upsertIdempotency(client, appeal.tenantId, idempotencyKey, idempotencyRecord);
       if (!reservation.inserted) {
+        if (idempotencyReplayAuditEvent !== undefined) await insertAudit(client, { ...idempotencyReplayAuditEvent, resourceId: reservation.response.id });
         await client.query("COMMIT");
         return reservation.response;
       }
@@ -262,8 +274,8 @@ async function insertDecision(client, decision) {
   await client.query(
     `INSERT INTO decisions (
       tenant_id, decision_id, policy_id, version, action, reason_codes_json, obligations_json,
-      matched_rule_id, input_hash, evidence_hash, correlation_id, created_at, created_by, receipt_json
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      matched_rule_id, input_hash, evidence_hash, request_id, correlation_id, created_at, created_by, receipt_json
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
     [
       decision.tenantId,
       decision.id,
@@ -275,6 +287,7 @@ async function insertDecision(client, decision) {
       decision.matchedRuleId ?? null,
       decision.inputHash,
       decision.evidenceHash,
+      decision.requestId ?? null,
       decision.correlationId,
       decision.createdAt,
       decision.createdBy ?? "system",
@@ -286,17 +299,17 @@ async function insertDecision(client, decision) {
 async function insertAppeal(client, appeal) {
   await client.query(
     `INSERT INTO appeals (
-      tenant_id, appeal_id, decision_id, status, reason, correlation_id, created_at, created_by
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [appeal.tenantId, appeal.id, appeal.decisionId, appeal.status, appeal.reason, appeal.correlationId, appeal.createdAt, appeal.createdBy]
+      tenant_id, appeal_id, decision_id, status, reason, request_id, correlation_id, created_at, created_by
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [appeal.tenantId, appeal.id, appeal.decisionId, appeal.status, appeal.reason, appeal.requestId ?? null, appeal.correlationId, appeal.createdAt, appeal.createdBy]
   );
 }
 
 async function insertAudit(client, event) {
   await client.query(
     `INSERT INTO audit_events (
-      tenant_id, audit_id, actor_id, action, resource_type, resource_id, correlation_id, reason, evidence_hash, created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      tenant_id, audit_id, actor_id, action, resource_type, resource_id, request_id, correlation_id, reason, evidence_hash, created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       event.tenantId,
       event.id,
@@ -304,6 +317,7 @@ async function insertAudit(client, event) {
       event.action,
       event.resourceType,
       event.resourceId,
+      event.requestId ?? null,
       event.correlationId,
       event.reason,
       event.evidenceHash,
@@ -315,9 +329,9 @@ async function insertAudit(client, event) {
 async function insertOutbox(client, event) {
   await client.query(
     `INSERT INTO outbox_events (
-      tenant_id, event_id, event_type, resource_id, correlation_id, payload_json, occurred_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [event.tenantId, event.id, event.eventType, event.resourceId, event.correlationId, JSON.stringify(event.payload), event.occurredAt]
+      tenant_id, event_id, event_type, resource_id, request_id, correlation_id, payload_json, occurred_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [event.tenantId, event.id, event.eventType, event.resourceId, event.requestId ?? null, event.correlationId, JSON.stringify(event.payload), event.occurredAt]
   );
 }
 
@@ -378,6 +392,7 @@ function decisionFromRow(row) {
     matchedRuleId: row.matched_rule_id ?? undefined,
     inputHash: row.input_hash,
     evidenceHash: row.evidence_hash,
+    requestId: row.request_id ?? undefined,
     correlationId: row.correlation_id,
     createdAt: row.created_at,
     receipt: row.receipt_json === null || row.receipt_json === undefined ? undefined : jsonFromColumn(row.receipt_json)
@@ -392,6 +407,7 @@ function auditFromRow(row) {
     action: row.action,
     resourceType: row.resource_type,
     resourceId: row.resource_id,
+    requestId: row.request_id ?? undefined,
     correlationId: row.correlation_id,
     reason: row.reason,
     evidenceHash: row.evidence_hash,
@@ -406,6 +422,7 @@ function appealFromRow(row) {
     decisionId: row.decision_id,
     status: row.status,
     reason: row.reason,
+    requestId: row.request_id ?? undefined,
     correlationId: row.correlation_id,
     createdAt: row.created_at,
     createdBy: row.created_by

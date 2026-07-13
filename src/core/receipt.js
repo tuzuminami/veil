@@ -16,6 +16,7 @@ export function createDecisionReceipt(decision, policyHash) {
     matchedRuleId: decision.matchedRuleId,
     inputHash: decision.inputHash,
     evidenceHash: decision.evidenceHash,
+    requestId: decision.requestId,
     correlationId: decision.correlationId,
     createdAt: decision.createdAt
   };

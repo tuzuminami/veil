@@ -93,7 +93,7 @@ test("AuthZEN returns an enforcement token only for an ALLOW decision", async ()
   }
 });
 
-test("AuthZEN single evaluation returns a boolean decision, receipt, and echoed request ID", async () => {
+test("AuthZEN separates a server request ID from the caller correlation ID", async () => {
   const fixture = await createFixture();
   try {
     const response = await dispatch(fixture.server, {
@@ -109,11 +109,14 @@ test("AuthZEN single evaluation returns a boolean decision, receipt, and echoed 
     });
 
     assert.equal(response.status, 200);
-    assert.equal(response.headers["x-request-id"], "authzen-1");
+    assert.match(response.headers["x-request-id"], /^[0-9a-f-]{36}$/);
+    assert.notEqual(response.headers["x-request-id"], "authzen-1");
     const payload = JSON.parse(response.body);
     assert.equal(payload.decision, true);
     assert.equal(payload.context.veil.action, "ALLOW");
     assert.equal(payload.context.veil.receipt.receiptVersion, "veil-decision-receipt/1.0");
+    assert.equal(payload.context.veil.receipt.requestId, response.headers["x-request-id"]);
+    assert.equal(payload.context.veil.receipt.correlationId, "authzen-1");
   } finally {
     await fixture.cleanup();
   }
@@ -142,7 +145,8 @@ test("AuthZEN minimal request fails closed and malformed requests return 400", a
       body: JSON.stringify({ subject: { type: "agent", id: "agent-1" } })
     });
     assert.equal(malformed.status, 400);
-    assert.equal(malformed.headers["x-request-id"], "authzen-error-1");
+    assert.match(malformed.headers["x-request-id"], /^[0-9a-f-]{36}$/);
+    assert.notEqual(malformed.headers["x-request-id"], "authzen-error-1");
     assert.equal(JSON.parse(malformed.body).error.code, "VALIDATION_FAILED");
   } finally {
     await fixture.cleanup();
@@ -182,7 +186,106 @@ test("request identifiers are bounded without echoing oversized values", async (
     });
 
     assert.equal(response.status, 400);
-    assert.equal(response.headers["x-request-id"], undefined);
+    assert.match(response.headers["x-request-id"], /^[0-9a-f-]{36}$/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("caller correlation IDs use a bounded safe character set without replacing the server request ID", async () => {
+  const fixture = await createFixture();
+  try {
+    const response = await dispatch(fixture.server, {
+      method: "POST",
+      url: "/access/v1/evaluation",
+      headers: headers({ "x-correlation-id": "foreign id" }),
+      body: JSON.stringify({
+        subject: { type: "agent", id: "agent-1" },
+        action: { name: "model_call" },
+        resource: { type: "dataset", id: "docs" }
+      })
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(response.headers["x-request-id"], /^[0-9a-f-]{36}$/);
+    assert.notEqual(JSON.parse(response.body).error.correlationId, "foreign id");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("repeated caller correlation IDs retain distinct trusted audit request identities", async () => {
+  const fixture = await createFixture();
+  try {
+    const request = {
+      subject: { type: "agent", id: "agent-1" },
+      action: { name: "model_call" },
+      resource: { type: "dataset", id: "docs" }
+    };
+    const first = await dispatch(fixture.server, {
+      method: "POST",
+      url: "/access/v1/evaluation",
+      headers: headers({ "x-correlation-id": "shared-correlation" }),
+      body: JSON.stringify(request)
+    });
+    const second = await dispatch(fixture.server, {
+      method: "POST",
+      url: "/access/v1/evaluation",
+      headers: headers({ "x-correlation-id": "shared-correlation" }),
+      body: JSON.stringify(request)
+    });
+    const firstPayload = JSON.parse(first.body);
+    const secondPayload = JSON.parse(second.body);
+
+    assert.notEqual(first.headers["x-request-id"], second.headers["x-request-id"]);
+    assert.equal(firstPayload.context.veil.receipt.requestId, first.headers["x-request-id"]);
+    assert.equal(secondPayload.context.veil.receipt.requestId, second.headers["x-request-id"]);
+    const audit = await fixture.server.veil.service.listAuditEvents(
+      { tenantId: "tenant-a", actorId: "auditor", scopes: ["audit:read"], requestId: "audit-query", correlationId: "audit-query" }
+    );
+    const decisionEvents = audit.items.filter((event) => event.action === "decision.created");
+    assert.equal(decisionEvents.length, 2);
+    assert.deepEqual(new Set(decisionEvents.map((event) => event.correlationId)), new Set(["shared-correlation"]));
+    assert.deepEqual(new Set(decisionEvents.map((event) => event.requestId)), new Set([first.headers["x-request-id"], second.headers["x-request-id"]]));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("idempotent decision replays retain the original receipt and audit the new transport request", async () => {
+  const fixture = await createFixture();
+  try {
+    const request = { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } };
+    const first = await dispatch(fixture.server, {
+      method: "POST",
+      url: "/v1/decisions",
+      headers: headers({ "idempotency-key": "replay-safe-key", "x-correlation-id": "shared-replay" }),
+      body: JSON.stringify({ request })
+    });
+    const second = await dispatch(fixture.server, {
+      method: "POST",
+      url: "/v1/decisions",
+      headers: headers({ "idempotency-key": "replay-safe-key", "x-correlation-id": "shared-replay" }),
+      body: JSON.stringify({ request })
+    });
+    const firstPayload = JSON.parse(first.body);
+    const secondPayload = JSON.parse(second.body);
+
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.equal(firstPayload.data.id, secondPayload.data.id);
+    assert.equal(firstPayload.data.receipt.requestId, first.headers["x-request-id"]);
+    assert.equal(secondPayload.data.receipt.requestId, first.headers["x-request-id"]);
+    assert.notEqual(second.headers["x-request-id"], first.headers["x-request-id"]);
+
+    const audit = await fixture.server.veil.service.listAuditEvents(
+      { tenantId: "tenant-a", actorId: "auditor", scopes: ["audit:read"], correlationId: "audit-query" }
+    );
+    const created = audit.items.find((event) => event.action === "decision.created");
+    const replayed = audit.items.find((event) => event.action === "decision.idempotency.replayed");
+    assert.equal(created?.requestId, first.headers["x-request-id"]);
+    assert.equal(replayed?.requestId, second.headers["x-request-id"]);
+    assert.equal(replayed?.resourceId, firstPayload.data.id);
   } finally {
     await fixture.cleanup();
   }

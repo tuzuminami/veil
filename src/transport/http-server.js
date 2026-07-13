@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { FileVeilStore } from "../adapters/file-store.js";
 import { VeilService, computeDecisionInputHash } from "../application/veil-service.js";
 import { VeilError } from "../core/errors.js";
+import { attachTrustedRequestId } from "../core/request-identity.js";
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const DEVELOPMENT_AUTHENTICATOR = Symbol("veil.development-authenticator");
@@ -28,6 +29,9 @@ export function buildServer(options = {}) {
   const authenticator = resolved.authenticator ?? createDevelopmentAuthenticator();
 
   const server = createServer(async (request, response) => {
+    // This identity belongs to the server, never to a caller-controlled header.
+    request.veilRequestId = randomUUID();
+    response.veilRequestId = request.veilRequestId;
     try {
       await route({ service, store, authenticator, options: resolved }, request, response);
     } catch (error) {
@@ -112,7 +116,7 @@ async function route(runtime, request, response) {
           }
         }
       },
-      request.headers["x-request-id"] === undefined ? {} : { "x-request-id": requestId(request) }
+      {}
     );
   }
 
@@ -173,7 +177,10 @@ async function authenticate(authenticator, request) {
     authorization: request.headers.authorization,
     tenantId: optionalBoundedHeader(request.headers["x-tenant-id"], "X-Tenant-Id")
   });
-  return { ...authenticated, correlationId: correlationId(request) };
+  return {
+    ...attachTrustedRequestId(authenticated, requestId(request)),
+    correlationId: correlationId(request)
+  };
 }
 
 export function authZenDecisionRequest(body, configuredPolicyId) {
@@ -246,13 +253,13 @@ function idempotencyKey(request) {
 }
 
 function requestId(request) {
-  request.veilRequestId ??= optionalBoundedHeader(request.headers["x-request-id"], "X-Request-ID") ?? randomUUID();
+  request.veilRequestId ??= randomUUID();
   return request.veilRequestId;
 }
 
 function correlationId(request) {
-  request.veilCorrelationId ??= optionalBoundedHeader(request.headers["x-correlation-id"], "X-Correlation-Id")
-    ?? optionalBoundedHeader(request.headers["x-request-id"], "X-Request-ID")
+  request.veilCorrelationId ??= optionalCorrelationId(request.headers["x-correlation-id"], "X-Correlation-Id")
+    ?? optionalCorrelationId(request.headers["x-request-id"], "X-Request-ID")
     ?? randomUUID();
   return request.veilCorrelationId;
 }
@@ -310,9 +317,15 @@ function optionalBoundedHeader(value, name) {
   return normalized;
 }
 
+function optionalCorrelationId(value, name) {
+  const normalized = optionalBoundedHeader(value, name);
+  if (normalized !== undefined && !/^[A-Za-z0-9._:/=+-]+$/.test(normalized)) {
+    throw new VeilError("VALIDATION_FAILED", `${name} header has unsupported characters.`, 400);
+  }
+  return normalized;
+}
+
 function writeError(response, error, request) {
-  const rawRequestId = request.headers["x-request-id"]?.toString();
-  const headers = rawRequestId && rawRequestId.length <= 200 ? { "x-request-id": rawRequestId } : {};
   let errorCorrelationId;
   try {
     errorCorrelationId = correlationId(request);
@@ -320,9 +333,9 @@ function writeError(response, error, request) {
     errorCorrelationId = randomUUID();
   }
   if (error instanceof VeilError) {
-    return writeJson(response, error.status, { error: { code: error.code, message: error.message, details: error.details, correlationId: errorCorrelationId } }, headers);
+    return writeJson(response, error.status, { error: { code: error.code, message: error.message, details: error.details, correlationId: errorCorrelationId } });
   }
-  return writeJson(response, 500, { error: { code: "DEPENDENCY_UNAVAILABLE", message: "Request failed safely.", details: [], correlationId: errorCorrelationId } }, headers);
+  return writeJson(response, 500, { error: { code: "DEPENDENCY_UNAVAILABLE", message: "Request failed safely.", details: [], correlationId: errorCorrelationId } });
 }
 
 function writeJson(response, status, body, headers = {}) {
@@ -330,7 +343,8 @@ function writeJson(response, status, body, headers = {}) {
     "content-type": "application/json",
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
-    ...headers
+    ...headers,
+    "x-request-id": response.veilRequestId ?? randomUUID()
   });
   response.end(JSON.stringify(body));
 }

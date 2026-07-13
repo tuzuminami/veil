@@ -14,8 +14,8 @@ test("PostgresVeilStore parameterizes tenant-scoped reads and writes", async () 
     text: "SELECT * FROM decisions WHERE tenant_id = $1 AND decision_id = $2",
     values: ["tenant-a", "decision-1"]
   });
-  assert.match(pool.queries[1].text, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8\)/);
-  assert.deepEqual(pool.queries[1].values, ["tenant-a", "appeal-1", "decision-1", "open", "reason", "corr-1", "2026-07-11T00:00:00.000Z", "actor-1"]);
+  assert.match(pool.queries[1].text, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9\)/);
+  assert.deepEqual(pool.queries[1].values, ["tenant-a", "appeal-1", "decision-1", "open", "reason", "server-request-1", "corr-1", "2026-07-11T00:00:00.000Z", "actor-1"]);
 });
 
 test("PostgresVeilStore scopes audit and idempotency records to their tenant", async () => {
@@ -85,6 +85,7 @@ test("commitDecision commits all writes on one client and releases it", async ()
   const result = await store.commitDecision({
     decision: decision(),
     auditEvent: auditEvent(),
+    idempotencyReplayAuditEvent: auditEvent(),
     outboxEvent: outboxEvent(),
     idempotencyKey: "tenant-a:decision:key-1",
     idempotencyRecord: { fingerprint: "fingerprint-1", response: { id: "decision-1" } }
@@ -258,6 +259,7 @@ function decision() {
     obligations: [],
     inputHash: "input-hash",
     evidenceHash: "evidence-hash",
+    requestId: "server-request-1",
     correlationId: "corr-1",
     createdAt: "2026-07-11T00:00:00.000Z"
   };
@@ -275,6 +277,7 @@ function decisionRow() {
     matched_rule_id: null,
     input_hash: "input-hash",
     evidence_hash: "evidence-hash",
+    request_id: "server-request-1",
     correlation_id: "corr-1",
     created_at: "2026-07-11T00:00:00.000Z",
     created_by: "system"
@@ -289,6 +292,7 @@ function auditEvent() {
     action: "decision.created",
     resourceType: "decision",
     resourceId: "decision-1",
+    requestId: "server-request-1",
     correlationId: "corr-1",
     reason: "allowed",
     evidenceHash: "evidence-hash",
@@ -302,6 +306,7 @@ function outboxEvent() {
     tenantId: "tenant-a",
     eventType: "veil.decision.created.v1",
     resourceId: "decision-1",
+    requestId: "server-request-1",
     correlationId: "corr-1",
     payload: { action: "allow" },
     occurredAt: "2026-07-11T00:00:00.000Z"
@@ -315,6 +320,7 @@ function appeal() {
     decisionId: "decision-1",
     status: "open",
     reason: "reason",
+    requestId: "server-request-1",
     correlationId: "corr-1",
     createdAt: "2026-07-11T00:00:00.000Z",
     createdBy: "actor-1"

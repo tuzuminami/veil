@@ -142,6 +142,7 @@ test("Decision distinguishes legacy responses from receipt-bearing current respo
     obligations: [],
     inputHash: "input-hash",
     evidenceHash: "evidence-hash",
+    requestId: "server-request-1",
     correlationId: "corr-1",
     createdAt: "2026-07-12T00:00:00.000Z",
     legacy: true
@@ -167,6 +168,7 @@ test("Decision distinguishes legacy responses from receipt-bearing current respo
       obligations: legacyDecision.obligations,
       inputHash: legacyDecision.inputHash,
       evidenceHash: legacyDecision.evidenceHash,
+      requestId: legacyDecision.requestId,
       correlationId: legacyDecision.correlationId,
       createdAt: legacyDecision.createdAt,
       receiptHash: "receipt-hash"

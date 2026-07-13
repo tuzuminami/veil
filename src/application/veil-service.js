@@ -3,6 +3,7 @@ import { sha256 } from "../core/canonical.js";
 import { VeilError } from "../core/errors.js";
 import { decide, validateDecisionRequest, validatePolicyBundle } from "../core/policy.js";
 import { createDecisionReceipt } from "../core/receipt.js";
+import { readTrustedRequestId } from "../core/request-identity.js";
 import { assertDecisionRequestSchema, assertPolicyBundleSchema } from "../validation/schemas.js";
 
 export class VeilService {
@@ -14,6 +15,7 @@ export class VeilService {
   }
 
   async createDraft(context, policyId, bundle) {
+    context = withTrustedRequestId(context, this.newId);
     requireScope(context, "policy:write");
     validatePolicyBundle(bundle);
     assertPolicyBundleSchema(bundle);
@@ -40,11 +42,15 @@ export class VeilService {
   }
 
   async publish(context, policyId, version, idempotencyKey) {
+    context = withTrustedRequestId(context, this.newId);
     requireScope(context, "policy:write");
     const idemKey = `publish:${idempotencyKey}`;
     const fingerprint = sha256({ operation: "publish", tenantId: context.tenantId, policyId, version });
     const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      await this.store.appendAudit(this.createIdempotencyReplayAuditEvent(context, "policy.version.idempotency.replayed", "policy-version", `${policyId}@${version}`, idemKey));
+      return cached;
+    }
 
     const policy = await this.getPolicyOrThrow(context.tenantId, policyId, version);
     if (policy.status === "published") {
@@ -54,8 +60,9 @@ export class VeilService {
     const published = { ...policy, status: "published", publishedAt: this.clock.now().toISOString() };
     const idempotencyRecord = writeIdempotency(fingerprint, published);
     const auditEvent = this.createAuditEvent(context, "policy.version.published", "policy-version", `${policyId}@${version}`, "published", published.contentHash);
+    const idempotencyReplayAuditEvent = this.createIdempotencyReplayAuditEvent(context, "policy.version.idempotency.replayed", "policy-version", `${policyId}@${version}`, idemKey);
     if (typeof this.store.commitPolicyPublish === "function") {
-      return this.store.commitPolicyPublish({ policy: published, auditEvent, idempotencyKey: idemKey, idempotencyRecord });
+      return this.store.commitPolicyPublish({ policy: published, auditEvent, idempotencyReplayAuditEvent, idempotencyKey: idemKey, idempotencyRecord });
     }
     await this.store.savePolicyVersion(published);
     await this.store.setIdempotency(context.tenantId, idemKey, idempotencyRecord);
@@ -64,6 +71,7 @@ export class VeilService {
   }
 
   async createDecision(context, request, idempotencyKey) {
+    context = withTrustedRequestId(context, this.newId);
     requireScope(context, "decision:write");
     validateDecisionRequest(request);
     assertDecisionRequestSchema(request);
@@ -71,7 +79,10 @@ export class VeilService {
     const idemKey = `decision:${idempotencyKey}`;
     const fingerprint = sha256({ operation: "decision", tenantId: context.tenantId, request });
     const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
-    if (cached !== undefined) return this.withEnforcementToken(cached);
+    if (cached !== undefined) {
+      await this.store.appendAudit(this.createIdempotencyReplayAuditEvent(context, "decision.idempotency.replayed", "decision", cached.id, idemKey));
+      return this.withEnforcementToken(cached);
+    }
 
     const policy = await this.getDecisionPolicyOrThrow(context.tenantId, request.policyId, request.version);
     const decisionInput = {
@@ -94,19 +105,21 @@ export class VeilService {
       matchedRuleId: result.matchedRule?.id,
       inputHash,
       evidenceHash: sha256({ policyHash: policy.contentHash, inputHash, result }),
+      requestId: context.requestId,
       correlationId: context.correlationId,
       createdAt: this.clock.now().toISOString()
     };
     decision.receipt = createDecisionReceipt(decision, policy.contentHash);
     const idempotencyRecord = writeIdempotency(fingerprint, decision);
     const auditEvent = this.createAuditEvent(context, "decision.created", "decision", decision.id, decision.reasonCodes.join(","), decision.evidenceHash);
+    const idempotencyReplayAuditEvent = this.createIdempotencyReplayAuditEvent(context, "decision.idempotency.replayed", "decision", decision.id, idemKey);
     const outboxEvent = this.createOutboxEvent(context, "veil.decision.created.v1", decision.id, {
       action: decision.action,
       policyId: decision.policyId,
       version: decision.version
     });
     if (typeof this.store.commitDecision === "function") {
-      const persisted = await this.store.commitDecision({ decision, auditEvent, outboxEvent, idempotencyKey: idemKey, idempotencyRecord });
+      const persisted = await this.store.commitDecision({ decision, auditEvent, idempotencyReplayAuditEvent, outboxEvent, idempotencyKey: idemKey, idempotencyRecord });
       return this.withEnforcementToken(persisted);
     } else {
       await this.store.saveDecision(decision);
@@ -126,11 +139,15 @@ export class VeilService {
   }
 
   async createAppeal(context, request, idempotencyKey) {
+    context = withTrustedRequestId(context, this.newId);
     requireScope(context, "appeal:write");
     const idemKey = `appeal:${idempotencyKey}`;
     const fingerprint = sha256({ operation: "appeal", tenantId: context.tenantId, request });
     const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      await this.store.appendAudit(this.createIdempotencyReplayAuditEvent(context, "appeal.idempotency.replayed", "appeal", cached.id, idemKey));
+      return cached;
+    }
     if (typeof request.decisionId !== "string" || request.decisionId.length === 0) {
       throw new VeilError("VALIDATION_FAILED", "decisionId is required.", 422);
     }
@@ -142,18 +159,20 @@ export class VeilService {
       decisionId: request.decisionId,
       status: "open",
       reason: typeof request.reason === "string" ? request.reason : "unspecified",
+      requestId: context.requestId,
       correlationId: context.correlationId,
       createdAt: this.clock.now().toISOString(),
       createdBy: context.actorId
     };
     const idempotencyRecord = writeIdempotency(fingerprint, appeal);
     const auditEvent = this.createAuditEvent(context, "appeal.created", "appeal", appeal.id, "appeal opened", sha256(appeal));
+    const idempotencyReplayAuditEvent = this.createIdempotencyReplayAuditEvent(context, "appeal.idempotency.replayed", "appeal", appeal.id, idemKey);
     const outboxEvent = this.createOutboxEvent(context, "veil.appeal.created.v1", appeal.id, {
       decisionId: appeal.decisionId,
       status: appeal.status
     });
     if (typeof this.store.commitAppeal === "function") {
-      return this.store.commitAppeal({ appeal, auditEvent, outboxEvent, idempotencyKey: idemKey, idempotencyRecord });
+      return this.store.commitAppeal({ appeal, auditEvent, idempotencyReplayAuditEvent, outboxEvent, idempotencyKey: idemKey, idempotencyRecord });
     }
     await this.store.saveAppeal(appeal);
     await this.store.setIdempotency(context.tenantId, idemKey, idempotencyRecord);
@@ -211,6 +230,7 @@ export class VeilService {
   }
 
   async setActivePolicyBinding(context, policyId, version, auditAction, auditReason) {
+    context = withTrustedRequestId(context, this.newId);
     requireScope(context, "policy:write");
     const policy = await this.getPolicyOrThrow(context.tenantId, policyId, version);
     if (policy.status !== "published") {
@@ -246,11 +266,23 @@ export class VeilService {
       action,
       resourceType,
       resourceId,
+      requestId: context.requestId,
       correlationId: context.correlationId,
       reason,
       evidenceHash,
       createdAt: this.clock.now().toISOString()
     };
+  }
+
+  createIdempotencyReplayAuditEvent(context, action, resourceType, resourceId, idempotencyKey) {
+    return this.createAuditEvent(
+      context,
+      action,
+      resourceType,
+      resourceId,
+      "idempotency response replayed",
+      sha256({ operation: "idempotency-replay", tenantId: context.tenantId, idempotencyKey })
+    );
   }
 
   async outbox(context, eventType, resourceId, payload) {
@@ -264,6 +296,7 @@ export class VeilService {
       eventType,
       tenantId: context.tenantId,
       resourceId,
+      requestId: context.requestId,
       correlationId: context.correlationId,
       payload,
       occurredAt: this.clock.now().toISOString()
@@ -317,6 +350,10 @@ function requireScope(context, scope) {
   if (!context.scopes.includes(scope)) {
     throw new VeilError("TENANT_SCOPE_DENIED", "Request cannot access this operation.", 403);
   }
+}
+
+function withTrustedRequestId(context, newId) {
+  return { ...context, requestId: readTrustedRequestId(context) ?? newId() };
 }
 
 function readIdempotency(record, fingerprint) {

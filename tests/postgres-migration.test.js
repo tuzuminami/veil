@@ -74,18 +74,19 @@ test("PostgreSQL migration runner fails closed when a legacy baseline column or 
 
 test("PostgreSQL migration runner supports fresh install, upgrade, and repeat execution", { skip: databaseUrl === undefined }, async () => {
   await withSchema(async (client, pool) => {
-    assert.deepEqual(await runPostgresMigrations(pool), ["001_init.sql", "002_v1.sql"]);
+    assert.deepEqual(await runPostgresMigrations(pool), ["001_init.sql", "002_v1.sql", "003_request_identity.sql"]);
     assert.deepEqual(await runPostgresMigrations(pool), []);
-    assert.deepEqual(await ledgerVersions(client), ["001_init.sql", "002_v1.sql"]);
+    assert.deepEqual(await ledgerVersions(client), ["001_init.sql", "002_v1.sql", "003_request_identity.sql"]);
     assert.equal(await tableExists(client, "active_policy_bindings"), true);
     assert.equal(await columnExists(client, "decisions", "receipt_json"), true);
+    assert.equal(await columnExists(client, "audit_events", "request_id"), true);
   });
 
   await withSchema(async (client, pool) => {
     await client.query(await readFile("migrations/001_init.sql", "utf8"));
-    assert.deepEqual(await runPostgresMigrations(pool), ["001_init.sql", "002_v1.sql"]);
+    assert.deepEqual(await runPostgresMigrations(pool), ["001_init.sql", "002_v1.sql", "003_request_identity.sql"]);
     assert.equal(await tableExists(client, "active_policy_bindings"), true);
-    assert.deepEqual(await ledgerVersions(client), ["001_init.sql", "002_v1.sql"]);
+    assert.deepEqual(await ledgerVersions(client), ["001_init.sql", "002_v1.sql", "003_request_identity.sql"]);
   });
 });
 
@@ -117,9 +118,11 @@ test("PostgreSQL migration runner preserves legacy v0.2 rows and supports v1 rol
     const legacyIdempotency = await client.query("SELECT fingerprint FROM idempotency_records WHERE idempotency_key = 'tenant-a:decision:legacy-key'");
     assert.equal(legacyIdempotency.rows[0].fingerprint, null);
 
+    await client.query(await readFile("migrations/003_request_identity.down.sql", "utf8"));
     await client.query(await readFile("migrations/002_v1.down.sql", "utf8"));
     assert.equal(await tableExists(client, "active_policy_bindings"), false);
     assert.equal(await columnExists(client, "decisions", "receipt_json"), false);
+    assert.equal(await columnExists(client, "audit_events", "request_id"), false);
     assert.equal(await columnExists(client, "idempotency_records", "fingerprint"), false);
     assert.deepEqual(await ledgerVersions(client), ["001_init.sql"]);
   });

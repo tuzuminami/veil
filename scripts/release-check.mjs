@@ -11,7 +11,7 @@ const readme = text("README.md");
 const license = text("LICENSE");
 const workflow = text(".github/workflows/ci.yml");
 const version = packageJson.version;
-const forwardMigrations = ["migrations/001_init.sql", "migrations/002_v1.sql"];
+const forwardMigrations = ["migrations/001_init.sql", "migrations/002_v1.sql", "migrations/003_request_identity.sql"];
 
 check(/^\d+\.\d+\.\d+$/.test(version), `package version must be stable semver, got ${version}`);
 check(packageJson.license === "Apache-2.0", "package license must be Apache-2.0");
@@ -36,7 +36,10 @@ for (const path of [
   "migrations/001_init.sql",
   "migrations/002_v1.sql",
   "migrations/002_v1.down.sql",
+  "migrations/003_request_identity.sql",
+  "migrations/003_request_identity.down.sql",
   "docs/runbooks/production.md",
+  "docs/adr/ADR-003-request-identities.md",
   "schemas/decision-request.schema.json",
   "schemas/decision-receipt.schema.json"
 ]) {
