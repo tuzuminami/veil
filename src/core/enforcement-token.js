@@ -23,6 +23,7 @@ export function createEnforcementTokenSigner({ privateKeyPem, keyId, issuer, aud
       return new SignJWT({
         tenant_id: decision.tenantId,
         action: decision.action,
+        requested_action: decision.requestedAction,
         decision_id: decision.id,
         input_hash: decision.inputHash,
         policy_hash: policyHash,

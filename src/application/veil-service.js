@@ -87,6 +87,7 @@ export class VeilService {
       tenantId: context.tenantId,
       policyId: request.policyId,
       version: policy.version,
+      requestedAction: request.type,
       action: result.action,
       reasonCodes: result.reasonCodes,
       obligations: result.obligations,
@@ -270,7 +271,7 @@ export class VeilService {
   }
 
   async withEnforcementToken(decision) {
-    if (decision.action !== "ALLOW" || this.enforcementTokenSigner === undefined || decision.receipt === undefined) return decision;
+    if (decision.action !== "ALLOW" || !["model_call", "tool_call"].includes(decision.requestedAction) || this.enforcementTokenSigner === undefined || decision.receipt === undefined) return decision;
     return {
       ...decision,
       enforcementToken: await this.enforcementTokenSigner.issue(decision, decision.receipt.policyHash, new Date(decision.createdAt))

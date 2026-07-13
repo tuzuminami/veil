@@ -549,7 +549,7 @@ test("ALLOW decisions issue verifiable short-lived EdDSA enforcement tokens whil
     const context = ctx("tenant-a", ["policy:write", "decision:write"]);
     await fixture.service.createDraft(context, "policy-main", bundle);
     await fixture.service.publish(context, "policy-main", "1.0.0", "publish-key");
-    const allowed = await fixture.service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } }, "allow-key");
+    const allowed = await fixture.service.createDecision(context, typedRequest("model_call", { risk: "low" }), "allow-key");
     const blocked = await fixture.service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { message: "secret" } }, "block-key");
     const key = await importJWK(signer.jwks().keys[0], "EdDSA");
     const verified = await jwtVerify(allowed.enforcementToken, key, {
@@ -562,13 +562,14 @@ test("ALLOW decisions issue verifiable short-lived EdDSA enforcement tokens whil
     assert.equal(verified.protectedHeader.kid, "veil-test-2026-01");
     assert.equal(verified.payload.tenant_id, "tenant-a");
     assert.equal(verified.payload.action, "ALLOW");
+    assert.equal(verified.payload.requested_action, "model_call");
     assert.equal(verified.payload.decision_id, allowed.id);
     assert.equal(verified.payload.input_hash, allowed.inputHash);
     assert.equal(verified.payload.policy_hash, allowed.receipt.policyHash);
     assert.equal(verified.payload.receipt_hash, allowed.receipt.receiptHash);
     assert.equal(verified.payload.jti, allowed.id);
     assert.equal(ENFORCEMENT_INPUT_HASH_VERSION, "veil-input-hash/1");
-    assert.equal(computeDecisionInputHash({ policyId: "policy-main", version: "1.0.0", input: { risk: "low" } }), allowed.inputHash);
+    assert.equal(computeDecisionInputHash(typedRequest("model_call", { risk: "low" })), allowed.inputHash);
     assert.equal(blocked.enforcementToken, undefined);
     const persisted = await readFile(fixture.path, "utf8");
     assert.doesNotMatch(persisted, /eyJ[A-Za-z0-9_-]+\./);
