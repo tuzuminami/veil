@@ -50,6 +50,7 @@
     "check:relay-enforcement": "node --experimental-strip-types scripts/check-relay-enforcement-contract.mjs",
     "check:private-boundary": "node scripts/check-private-boundary.mjs",
     "check:release-artifact": "node scripts/check-release-artifact.mjs",
+    "check:release-artifact-fixture": "node scripts/check-release-artifact-fixture.mjs",
     "check:published-release-artifact": "node scripts/check-release-artifact.mjs --published",
     "check:release": "node scripts/release-check.mjs",
     "migrate": "node bin/veil-migrate.mjs",

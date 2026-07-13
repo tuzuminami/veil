@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
@@ -29,10 +29,16 @@ try {
     const asset = assets.find((candidate) => candidate?.name === filename);
     check(asset?.browser_download_url === url, `published release must attach ${filename} at its canonical URL`);
 
-    const response = await fetch(asset.browser_download_url, { redirect: "follow" });
-    check(response.ok, `release artifact download failed with HTTP ${response.status}`);
     const releasedTarball = join(temp, `released-${filename}`);
-    writeFileSync(releasedTarball, Buffer.from(await response.arrayBuffer()));
+    const fixtureTarball = process.env.VEIL_RELEASE_ASSET_PATH;
+    if (fixtureTarball) {
+      check(statSync(fixtureTarball).isFile(), "release artifact fixture must be a file");
+      copyFileSync(fixtureTarball, releasedTarball);
+    } else {
+      const response = await fetch(asset.browser_download_url, { redirect: "follow" });
+      check(response.ok, `release artifact download failed with HTTP ${response.status}`);
+      writeFileSync(releasedTarball, Buffer.from(await response.arrayBuffer()));
+    }
 
     const expectedTarball = packSourceArtifact();
     const expectedPackage = extractPackage(expectedTarball, join(temp, "expected"));

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { parseDocument } from "yaml";
 
 const packageJson = json("package.json");
@@ -12,6 +12,9 @@ const license = text("LICENSE");
 const workflow = text(".github/workflows/ci.yml");
 const releaseArtifactWorkflow = text(".github/workflows/release-artifact.yml");
 const releaseRunbook = text("docs/runbooks/release.md");
+const workflowSources = readdirSync(".github/workflows")
+  .filter((path) => path.endsWith(".yml") || path.endsWith(".yaml"))
+  .map((path) => text(`.github/workflows/${path}`));
 const version = packageJson.version;
 const releaseArtifactUrl = `https://github.com/tuzuminami/veil/releases/download/v${version}/${packageJson.name.slice(1).replace("/", "-")}-${version}.tgz`;
 const forwardMigrations = ["migrations/001_init.sql", "migrations/002_v1.sql", "migrations/003_request_identity.sql"];
@@ -56,15 +59,18 @@ for (const path of forwardMigrations) {
   check(!/^\s*(BEGIN|COMMIT);\s*$/mi.test(text(path)), `${path} must leave transaction ownership to the migration runner`);
 }
 
-check(!/^\s*uses:\s*[^#\n]+@(v\d+|main|master)\s*(?:#.*)?$/m.test(workflow), "GitHub Actions must be pinned to immutable commit SHAs");
+check(workflowSources.length > 0, "at least one GitHub Actions workflow is required");
+check(!workflowSources.some((source) => /^\s*uses:\s*[^#\n]+@(v\d+|main|master)\s*(?:#.*)?$/m.test(source)), "GitHub Actions must be pinned to immutable commit SHAs");
 check(workflow.includes("pnpm install --frozen-lockfile"), "CI must use the frozen lockfile");
 check(workflow.includes("pnpm run audit"), "CI must audit production dependencies");
 check(workflow.includes("Checkout RELAY compatibility consumer"), "CI must check out the RELAY enforcement consumer");
 check(workflow.includes("89b417a653ff468a7ce5ae0d3965370a998ed3a0"), "CI must pin the RELAY VEIL audience contract by commit SHA");
 check(workflow.includes("pnpm run check:relay-enforcement"), "CI must run the VEIL to RELAY enforcement compatibility check");
 check(packageJson.scripts["check:release-artifact"] === "node scripts/check-release-artifact.mjs", "package must provide the public release artifact check");
+check(packageJson.scripts["check:release-artifact-fixture"] === "node scripts/check-release-artifact-fixture.mjs", "package must provide the release artifact fixture check");
 check(packageJson.scripts["check:published-release-artifact"] === "node scripts/check-release-artifact.mjs --published", "package must provide the published release artifact check");
 check(workflow.includes("pnpm run check:release-artifact"), "CI must verify the release artifact declaration");
+check(workflow.includes("pnpm run check:release-artifact-fixture"), "CI must verify the published artifact path with a local fixture");
 check(releaseArtifactWorkflow.includes("types: [published]"), "release artifact workflow must run when a release is published");
 check(releaseArtifactWorkflow.includes("pnpm run check:published-release-artifact"), "release artifact workflow must download and install the published package");
 check(releaseArtifactWorkflow.includes("VEIL_RELEASE_TAG") && releaseArtifactWorkflow.includes("VEIL_RELEASE_ASSETS_JSON"), "release artifact workflow must bind the event tag and assets");
