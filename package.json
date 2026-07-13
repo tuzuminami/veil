@@ -19,12 +19,17 @@
     ".": "./src/index.js",
     "./auth": "./src/auth/oidc-auth.js",
     "./postgres": "./src/adapters/postgres-store.js",
+    "./migrations": "./src/migrations/postgres-runner.js",
     "./sdk": "./src/sdk/client.js",
     "./runtime": "./src/runtime/production.js",
     "./server": "./src/transport/http-server.js",
     "./package.json": "./package.json"
   },
+  "bin": {
+    "veil-migrate": "./bin/veil-migrate.mjs"
+  },
   "files": [
+    "bin",
     "src",
     "openapi",
     "schemas",
@@ -44,6 +49,7 @@
     "check:package": "node scripts/package-smoke.mjs",
     "check:private-boundary": "node scripts/check-private-boundary.mjs",
     "check:release": "node scripts/release-check.mjs",
+    "migrate": "node bin/veil-migrate.mjs",
     "verify": "pnpm run build && pnpm run test && pnpm run check:private-boundary && pnpm run check:package && pnpm run check:release"
   },
   "dependencies": {

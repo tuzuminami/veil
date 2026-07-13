@@ -11,6 +11,7 @@ const readme = text("README.md");
 const license = text("LICENSE");
 const workflow = text(".github/workflows/ci.yml");
 const version = packageJson.version;
+const forwardMigrations = ["migrations/001_init.sql", "migrations/002_v1.sql"];
 
 check(/^\d+\.\d+\.\d+$/.test(version), `package version must be stable semver, got ${version}`);
 check(packageJson.license === "Apache-2.0", "package license must be Apache-2.0");
@@ -40,6 +41,13 @@ for (const path of [
   "schemas/decision-receipt.schema.json"
 ]) {
   check(existsSync(path), `${path} is required for release`);
+}
+
+check(existsSync("src/migrations/postgres-runner.js"), "checksummed PostgreSQL migration runner is required for release");
+check(packageJson.scripts.migrate === "node bin/veil-migrate.mjs", "package must provide the PostgreSQL migration command");
+check(packageJson.bin?.["veil-migrate"] === "./bin/veil-migrate.mjs", "package must expose the PostgreSQL migration CLI");
+for (const path of forwardMigrations) {
+  check(!/^\s*(BEGIN|COMMIT);\s*$/mi.test(text(path)), `${path} must leave transaction ownership to the migration runner`);
 }
 
 check(!/^\s*uses:\s*[^#\n]+@(v\d+|main|master)\s*(?:#.*)?$/m.test(workflow), "GitHub Actions must be pinned to immutable commit SHAs");

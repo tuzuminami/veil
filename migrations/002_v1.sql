@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS active_policy_bindings (
   tenant_id TEXT NOT NULL,
   policy_id TEXT NOT NULL,
@@ -21,5 +19,3 @@ CREATE INDEX IF NOT EXISTS decisions_tenant_created_idx
 
 CREATE INDEX IF NOT EXISTS audit_events_tenant_created_idx
   ON audit_events (tenant_id, created_at DESC, audit_id);
-
-COMMIT;

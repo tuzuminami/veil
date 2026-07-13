@@ -35,16 +35,14 @@ Only trusted policy-enforcement points may receive both `decision:write` and `de
 
 ## Migration
 
-Back up the database, then apply migrations in order:
+Back up the database, then run the migration command once per deployment:
 
 ```bash
 pg_dump --format=custom --file=veil-before-v1.dump "$DATABASE_URL"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/001_init.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/002_v1.sql
+DATABASE_URL="$DATABASE_URL" pnpm run migrate
 ```
 
-`002_v1.sql` adds active policy bindings, idempotency fingerprints, receipt persistence, and tenant/time indexes.
-Both v1 migration files run their DDL inside an explicit PostgreSQL transaction. With `ON_ERROR_STOP=1`, a failed upgrade or rollback is rolled back as one unit; do not split the migration statements across separate `psql` invocations.
+For a published-package deployment, install `@tuzuminami/veil` and run `DATABASE_URL="$DATABASE_URL" pnpm exec veil-migrate`. `002_v1.sql` adds active policy bindings, idempotency fingerprints, receipt persistence, and tenant/time indexes. The runner checks out a dedicated PostgreSQL client, uses a transaction-scoped advisory lock for each migration, records each applied filename and SHA-256 checksum in `veil_schema_migrations`, and owns one transaction per forward migration. Before baselining a pre-existing v0.2 schema as `001_init.sql`, it validates the required tables, columns, primary keys, and `appeals` foreign key from PostgreSQL catalogs. Re-running it is safe; it stops before executing a forward migration if an applied filename is unknown or its checksum changed. Do not edit an applied migration: restore it and add a new numbered migration instead.
 
 Decisions created before v1 remain readable with `legacy: true` and no `receipt`; v1 cannot reconstruct a trustworthy receipt from an older row. Existing v0.2 idempotency rows have no request fingerprint and therefore fail closed with `IDEMPOTENCY_CONFLICT` if reused after upgrade.
 
@@ -65,7 +63,7 @@ Take regular encrypted PostgreSQL backups and test restoration:
 ```bash
 createdb veil_restore_test
 pg_restore --exit-on-error --dbname=veil_restore_test veil-before-v1.dump
-psql veil_restore_test -v ON_ERROR_STOP=1 -f migrations/002_v1.sql
+DATABASE_URL='postgresql:///veil_restore_test' pnpm run migrate
 ```
 
 Verify tenant-scoped policy, decision, receipt, audit, and active-binding rows before declaring restore success.
@@ -78,4 +76,4 @@ Prefer application rollback while retaining the v1 schema. To return the schema 
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/002_v1.down.sql
 ```
 
-The down migration removes active bindings, receipt JSON, and idempotency fingerprints. This is destructive to v1-only evidence; restore the backup if the rollback itself fails.
+The down migration removes active bindings, receipt JSON, and idempotency fingerprints. It also removes the v1 ledger entry so a later `pnpm run migrate` can reapply v1. This is destructive to v1-only evidence; restore the backup if the rollback itself fails.
