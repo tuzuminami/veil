@@ -1,6 +1,6 @@
 {
   "name": "@tuzuminami/veil",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Fail-closed policy decision point for AI agent tool and model execution.",
   "type": "module",
   "license": "Apache-2.0",
@@ -49,6 +49,9 @@
     "check:package": "node scripts/package-smoke.mjs",
     "check:relay-enforcement": "node --experimental-strip-types scripts/check-relay-enforcement-contract.mjs",
     "check:private-boundary": "node scripts/check-private-boundary.mjs",
+    "check:release-artifact": "node scripts/check-release-artifact.mjs",
+    "check:release-artifact-fixture": "node scripts/check-release-artifact-fixture.mjs",
+    "check:published-release-artifact": "node scripts/check-release-artifact.mjs --published",
     "check:release": "node scripts/release-check.mjs",
     "migrate": "node bin/veil-migrate.mjs",
     "verify": "pnpm run build && pnpm run test && pnpm run check:private-boundary && pnpm run check:package && pnpm run check:release"

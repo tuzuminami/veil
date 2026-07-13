@@ -120,7 +120,25 @@ Production VEIL signs only typed `ALLOW` decisions as compact Ed25519 JWS tokens
 
 An idempotent retry returns the original decision artifact and never reissues a token. If that token has expired, submit a new decision request with a new idempotency key so VEIL can evaluate current policy and issue a new token.
 
-When running migrations from the published package rather than a repository checkout, install `@tuzuminami/veil` and use `DATABASE_URL='postgresql://veil@db/veil' pnpm exec veil-migrate`.
+## Install From The Verified Release
+
+VEIL is not published to the npm registry. Install the versioned GitHub Release
+artifact instead; this URL is tied to the `v1.0.1` tag and is checked by the
+release CI:
+
+```bash
+pnpm add https://github.com/tuzuminami/veil/releases/download/v1.0.1/tuzuminami-veil-1.0.1.tgz
+DATABASE_URL='postgresql://veil@db/veil' pnpm exec veil-migrate
+```
+
+The [v1.0.1 release](https://github.com/tuzuminami/veil/releases/tag/v1.0.1)
+also includes the CycloneDX SBOM and GitHub records the SHA-256 digest for each
+asset. For development from a repository checkout, use `pnpm run migrate`
+instead.
+
+Release immutability is enabled for future VEIL releases: published assets and
+their tags cannot be changed. Consumers should still verify the GitHub release
+attestation and asset digest before production use.
 
 ## Policy Example
 

@@ -8,9 +8,12 @@ pnpm run audit
 pnpm run verify
 pnpm pack --dry-run
 gh api repos/tuzuminami/veil/license --jq '.license.spdx_id'
+gh api repos/tuzuminami/veil/immutable-releases --jq '.enabled'
 ```
 
-The license result must be `Apache-2.0`. The CI workflow must pass on the exact release commit and produce a CycloneDX SBOM artifact.
+The license result must be `Apache-2.0` and the immutable-release result must
+be `true`. The CI workflow must pass on the exact release commit and produce a
+CycloneDX SBOM artifact.
 
 ## Release Review
 
@@ -21,7 +24,30 @@ The license result must be `Apache-2.0`. The CI workflow must pass on the exact 
 5. Run independent correctness and security reviews.
 6. Create issues for confirmed findings, fix them through the release branch, and close them with evidence.
 7. Open a release PR, wait for required CI, and merge without bypassing checks.
-8. Create annotated tag `v<version>` on the merged commit and publish the GitHub Release with verification notes and SBOM.
+8. Create the package from the merged commit and attach that exact tarball plus the CI-generated SBOM to the GitHub Release. The release tag must equal `v<package.json version>`:
+
+```bash
+version="$(node -p "require('./package.json').version")"
+mkdir -p .release
+pnpm pack --pack-destination .release
+gh run download <merged-commit-ci-run-id> --name veil-sbom.cdx.json --dir .release
+gh release create "v$version" \
+  ".release/tuzuminami-veil-$version.tgz" \
+  .release/veil-sbom.cdx.json \
+  --target "$(git rev-parse HEAD)" \
+  --title "VEIL v$version" \
+  --draft
+gh release edit "v$version" --draft=false
+```
+
+Attach every asset while the release is a draft, then publish it once. The
+repository has immutable releases enabled, so published assets and their tag
+cannot be changed. The `Release Artifact Verification` workflow runs after
+publication. It checks
+that the tagged source package and uploaded tarball have identical files and
+SHA-256 content digests, then installs that downloaded tarball and executes the
+migration CLI guard. A failure means publish a corrected patch release; never
+replace a released tag or asset.
 
 Only the Commander performs GitHub write operations.
 
