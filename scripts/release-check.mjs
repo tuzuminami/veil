@@ -56,6 +56,9 @@ for (const path of forwardMigrations) {
 check(!/^\s*uses:\s*[^#\n]+@(v\d+|main|master)\s*(?:#.*)?$/m.test(workflow), "GitHub Actions must be pinned to immutable commit SHAs");
 check(workflow.includes("pnpm install --frozen-lockfile"), "CI must use the frozen lockfile");
 check(workflow.includes("pnpm run audit"), "CI must audit production dependencies");
+check(workflow.includes("Checkout RELAY compatibility consumer"), "CI must check out the RELAY enforcement consumer");
+check(workflow.includes("89b417a653ff468a7ce5ae0d3965370a998ed3a0"), "CI must pin the RELAY VEIL audience contract by commit SHA");
+check(workflow.includes("pnpm run check:relay-enforcement"), "CI must run the VEIL to RELAY enforcement compatibility check");
 check(workflow.includes("anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610"), "CI must use the pinned SBOM action");
 check(workflow.includes("format: cyclonedx-json") && workflow.includes("syft-version: v1.46.0"), "CI must generate a pinned CycloneDX SBOM");
 

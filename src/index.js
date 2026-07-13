@@ -4,6 +4,6 @@ export { PostgresVeilStore } from "./adapters/postgres-store.js";
 export { PostgresMigrationError, runPostgresMigrations } from "./migrations/postgres-runner.js";
 export { createOidcAuthenticator } from "./auth/oidc-auth.js";
 export { createDecisionReceipt, verifyDecisionReceipt } from "./core/receipt.js";
-export { createEnforcementTokenSigner } from "./core/enforcement-token.js";
+export { createEnforcementTokenSigner, RELAY_ENFORCEMENT_AUDIENCE } from "./core/enforcement-token.js";
 export { createProductionServer } from "./runtime/production.js";
 export { buildServer, createDevelopmentAuthenticator, authZenDecisionRequest, computeAuthZenInputHash } from "./transport/http-server.js";

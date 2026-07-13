@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { generateKeyPairSync } from "node:crypto";
+import { jwtVerify, importJWK } from "jose";
 import { createProductionServer } from "../src/runtime/production.js";
+import { RELAY_ENFORCEMENT_AUDIENCE } from "../src/core/enforcement-token.js";
 
 const { privateKey } = generateKeyPairSync("ed25519");
 const env = {
@@ -24,6 +26,23 @@ test("production runtime wires an injected pool and verifier without development
 
   assert.equal(typeof runtime.server.listen, "function");
   assert.equal(runtime.server.veil.store.pool, pool);
+  const signer = runtime.server.veil.service.enforcementTokenSigner;
+  const token = await signer.issue({
+    tenantId: "tenant-a",
+    action: "ALLOW",
+    requestedAction: "model_call",
+    id: "decision-audience-default",
+    inputHash: "a".repeat(64),
+    receipt: { receiptHash: "b".repeat(64) }
+  }, "c".repeat(64), new Date("2026-07-13T00:00:00.000Z"));
+  const key = await importJWK(signer.jwks().keys[0], "EdDSA");
+  const verified = await jwtVerify(token, key, {
+    issuer: env.VEIL_ENFORCEMENT_ISSUER,
+    audience: RELAY_ENFORCEMENT_AUDIENCE,
+    algorithms: ["EdDSA"],
+    currentDate: new Date("2026-07-13T00:00:30.000Z")
+  });
+  assert.equal(verified.payload.aud, RELAY_ENFORCEMENT_AUDIENCE);
   await runtime.close();
   assert.equal(pool.ended, true);
 });

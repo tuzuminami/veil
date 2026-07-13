@@ -2,8 +2,9 @@ import { createPrivateKey, createPublicKey } from "node:crypto";
 import { SignJWT } from "jose";
 
 const DEFAULT_TTL_SECONDS = 60;
+export const RELAY_ENFORCEMENT_AUDIENCE = "relay-api";
 
-export function createEnforcementTokenSigner({ privateKeyPem, keyId, issuer, audience = "relay", ttlSeconds = DEFAULT_TTL_SECONDS, previousPublicJwks = [] }) {
+export function createEnforcementTokenSigner({ privateKeyPem, keyId, issuer, audience = RELAY_ENFORCEMENT_AUDIENCE, ttlSeconds = DEFAULT_TTL_SECONDS, previousPublicJwks = [] }) {
   if (typeof privateKeyPem !== "string" || privateKeyPem.trim().length === 0) throw new Error("Enforcement token private key is required.");
   keyId = requiredIdentifier(keyId, "Enforcement token key ID");
   issuer = requiredIdentifier(issuer, "Enforcement token issuer");

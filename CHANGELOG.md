@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Aligned the default VEIL enforcement-token audience with RELAY's canonical `relay-api` contract and added a pinned production-signer-to-RELAY-verifier compatibility gate. Documented coordinated audience cutover and rollback because a mixed fleet fails closed.
+
 ## 1.0.0 - 2026-07-12
 
 - Focused VEIL on fail-closed AI agent model and tool pre-execution decisions.
