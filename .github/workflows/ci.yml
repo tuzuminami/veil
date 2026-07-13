@@ -53,7 +53,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: tuzuminami/relay
-          ref: d09ed5f1cff0e0725ce5f5ec074f4dc7c366a01b # RELAY v1.0.0
+          ref: 89b417a653ff468a7ce5ae0d3965370a998ed3a0 # RELAY VEIL audience contract
           path: .compat/relay
 
       - name: Install RELAY compatibility dependencies

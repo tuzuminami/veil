@@ -39,6 +39,17 @@ Do not put secrets in policy bundles, command history, or repository files. Supp
 
 The enforcement private key must also come from the deployment secret manager. Publish the previous public JWK alongside the new key before switching signers, retain it for at least the token TTL plus the five-minute JWKS cache window, then retire it. Consumers fetch `/.well-known/jwks.json` without bearer authentication and must retry a single JWKS refresh after an unknown `kid`.
 
+### RELAY audience migration
+
+RELAY verifies one enforcement-token audience at a time. Treat an audience change as a coordinated cutover, not a rolling update: a mixed VEIL/RELAY fleet can otherwise reject every otherwise-valid decision with `VEIL_DECISION_INVALID` (HTTP 403).
+
+1. Inventory every VEIL signer and RELAY verifier, then set the current shared value explicitly in both `VEIL_ENFORCEMENT_AUDIENCE` and `RELAY_VEIL_AUDIENCE`. Validate this in staging first.
+2. Drain enforcement traffic and wait for the largest configured token TTL (at most 300 seconds) so no valid token for the old audience remains in flight.
+3. Stop or scale down both sides, change both settings to the target value (`relay-api` for the RELAY v1 contract), then start RELAY before VEIL and restore traffic only after readiness checks pass.
+4. Send a canary decision and a canary RELAY request. Confirm that a token with the previous audience is denied and the new token is accepted before restoring full traffic.
+
+To roll back, drain traffic again, wait the same TTL, stop both sides, restore the prior matching audience on both services, start RELAY first, then restart VEIL. Do not roll back one side by itself.
+
 Only trusted policy-enforcement points may receive both `decision:write` and `decision:context:assert`. The latter authorizes the caller to assert agent, resource classification, model, attributes, and estimated cost on behalf of the workload. Do not grant it directly to untrusted agents or end users.
 
 ## Migration

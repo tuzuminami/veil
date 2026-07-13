@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Aligned the default VEIL enforcement-token audience with RELAY v1 (`relay-api`) and added a pinned VEIL-to-RELAY signer/verifier compatibility gate. Deployments that override the audience must configure the same value on both services before rollout.
+- Aligned the default VEIL enforcement-token audience with RELAY's canonical `relay-api` contract and added a pinned production-signer-to-RELAY-verifier compatibility gate. Documented coordinated audience cutover and rollback because a mixed fleet fails closed.
 
 ## 1.0.0 - 2026-07-12
 
