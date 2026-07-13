@@ -202,7 +202,9 @@ async function legacySchemaState(client) {
   if (result.rows.every((row) => !row.exists)) return "absent";
   for (const row of result.rows) {
     const expected = legacyTables[row.table_name];
-    if (!row.exists || !expected.columns.every((column) => row.columns.includes(column)) || !sameColumns(row.primary_key, expected.primaryKey)) {
+    const columns = normalizeCatalogColumns(row.columns);
+    const primaryKey = normalizeCatalogColumns(row.primary_key);
+    if (!row.exists || !expected.columns.every((column) => columns.includes(column)) || !sameColumns(primaryKey, expected.primaryKey)) {
       return "incomplete";
     }
   }
@@ -224,6 +226,12 @@ async function legacySchemaState(client) {
     ) AS exists
   `);
   return foreignKey.rows[0].exists ? "complete" : "incomplete";
+}
+
+function normalizeCatalogColumns(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string" && /^\{[a-z_]+(?:,[a-z_]+)*\}$/.test(value)) return value.slice(1, -1).split(",");
+  return [];
 }
 
 function sameColumns(actual, expected) {
