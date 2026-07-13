@@ -186,14 +186,14 @@ async function legacySchemaState(client) {
       ), ARRAY[]::text[]) AS columns,
       COALESCE((
         SELECT array_agg(attribute.attname ORDER BY key.ordinality)
-        FROM pg_catalog.pg_constraint constraint
-        JOIN pg_catalog.pg_class relation ON relation.oid = constraint.conrelid
+        FROM pg_catalog.pg_constraint con
+        JOIN pg_catalog.pg_class relation ON relation.oid = con.conrelid
         JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
-        JOIN unnest(constraint.conkey) WITH ORDINALITY AS key(attnum, ordinality) ON true
+        JOIN unnest(con.conkey) WITH ORDINALITY AS key(attnum, ordinality) ON true
         JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid = relation.oid AND attribute.attnum = key.attnum
         WHERE namespace.oid = current_schema()::regnamespace
           AND relation.relname = requested.table_name
-          AND constraint.contype = 'p'
+          AND con.contype = 'p'
       ), ARRAY[]::text[]) AS primary_key
     FROM unnest($1::text[]) AS requested(table_name)
     ORDER BY requested.table_name
@@ -210,17 +210,17 @@ async function legacySchemaState(client) {
   const foreignKey = await client.query(`
     SELECT EXISTS (
       SELECT 1
-      FROM pg_catalog.pg_constraint constraint
-      JOIN pg_catalog.pg_class child ON child.oid = constraint.conrelid
+      FROM pg_catalog.pg_constraint con
+      JOIN pg_catalog.pg_class child ON child.oid = con.conrelid
       JOIN pg_catalog.pg_namespace child_namespace ON child_namespace.oid = child.relnamespace
-      JOIN pg_catalog.pg_class parent ON parent.oid = constraint.confrelid
+      JOIN pg_catalog.pg_class parent ON parent.oid = con.confrelid
       JOIN pg_catalog.pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace
-      WHERE constraint.contype = 'f'
+        WHERE con.contype = 'f'
         AND child_namespace.oid = current_schema()::regnamespace
         AND parent_namespace.oid = current_schema()::regnamespace
         AND child.relname = 'appeals'
         AND parent.relname = 'decisions'
-        AND pg_catalog.pg_get_constraintdef(constraint.oid) = 'FOREIGN KEY (tenant_id, decision_id) REFERENCES decisions(tenant_id, decision_id)'
+        AND pg_catalog.pg_get_constraintdef(con.oid) = 'FOREIGN KEY (tenant_id, decision_id) REFERENCES decisions(tenant_id, decision_id)'
     ) AS exists
   `);
   return foreignKey.rows[0].exists ? "complete" : "incomplete";
