@@ -11,6 +11,7 @@ const readme = text("README.md");
 const license = text("LICENSE");
 const workflow = text(".github/workflows/ci.yml");
 const releaseArtifactWorkflow = text(".github/workflows/release-artifact.yml");
+const releaseRunbook = text("docs/runbooks/release.md");
 const version = packageJson.version;
 const releaseArtifactUrl = `https://github.com/tuzuminami/veil/releases/download/v${version}/${packageJson.name.slice(1).replace("/", "-")}-${version}.tgz`;
 const forwardMigrations = ["migrations/001_init.sql", "migrations/002_v1.sql", "migrations/003_request_identity.sql"];
@@ -66,6 +67,9 @@ check(packageJson.scripts["check:published-release-artifact"] === "node scripts/
 check(workflow.includes("pnpm run check:release-artifact"), "CI must verify the release artifact declaration");
 check(releaseArtifactWorkflow.includes("types: [published]"), "release artifact workflow must run when a release is published");
 check(releaseArtifactWorkflow.includes("pnpm run check:published-release-artifact"), "release artifact workflow must download and install the published package");
+check(releaseArtifactWorkflow.includes("VEIL_RELEASE_TAG") && releaseArtifactWorkflow.includes("VEIL_RELEASE_ASSETS_JSON"), "release artifact workflow must bind the event tag and assets");
+check(releaseRunbook.includes("pnpm pack --pack-destination .release"), "release runbook must generate the upload tarball from the release commit");
+check(releaseRunbook.includes("gh release create") && releaseRunbook.includes(".release/tuzuminami-veil-$version.tgz"), "release runbook must attach the generated package tarball");
 check(readme.includes(releaseArtifactUrl), `README must document the verified release artifact ${releaseArtifactUrl}`);
 check(!readme.includes("install `@tuzuminami/veil`"), "README must not claim that VEIL is published to the npm registry");
 check(workflow.includes("anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610"), "CI must use the pinned SBOM action");

@@ -21,7 +21,25 @@ The license result must be `Apache-2.0`. The CI workflow must pass on the exact 
 5. Run independent correctness and security reviews.
 6. Create issues for confirmed findings, fix them through the release branch, and close them with evidence.
 7. Open a release PR, wait for required CI, and merge without bypassing checks.
-8. Create annotated tag `v<version>` on the merged commit and publish the GitHub Release with verification notes and SBOM.
+8. Create the package from the merged commit and attach that exact tarball plus the CI-generated SBOM to the GitHub Release. The release tag must equal `v<package.json version>`:
+
+```bash
+version="$(node -p "require('./package.json').version")"
+mkdir -p .release
+pnpm pack --pack-destination .release
+gh run download <merged-commit-ci-run-id> --name veil-sbom.cdx.json --dir .release
+gh release create "v$version" \
+  ".release/tuzuminami-veil-$version.tgz" \
+  .release/veil-sbom.cdx.json \
+  --target "$(git rev-parse HEAD)" \
+  --title "VEIL v$version"
+```
+
+The `Release Artifact Verification` workflow runs after publication. It checks
+that the tagged source package and uploaded tarball have identical files and
+SHA-256 content digests, then installs that downloaded tarball and executes the
+migration CLI guard. A failure means publish a corrected patch release; never
+replace a released tag or asset.
 
 Only the Commander performs GitHub write operations.
 

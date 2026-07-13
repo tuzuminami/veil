@@ -32,4 +32,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Download and install the published release artifact
+        env:
+          VEIL_RELEASE_TAG: ${{ github.event.release.tag_name }}
+          VEIL_RELEASE_ASSETS_JSON: ${{ toJson(github.event.release.assets) }}
         run: pnpm run check:published-release-artifact
