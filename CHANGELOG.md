@@ -5,6 +5,7 @@
 - Aligned the default VEIL enforcement-token audience with RELAY's canonical `relay-api` contract and added a pinned production-signer-to-RELAY-verifier compatibility gate. Documented coordinated audience cutover and rollback because a mixed fleet fails closed.
 - Published the installable package as a versioned GitHub Release asset instead of claiming npm registry availability.
 - Added release-event verification that downloads, installs, and executes the packaged migration CLI after publication; the existing package smoke test remains the pre-publication gate.
+- Enabled GitHub immutable releases and documented draft-first publication so release assets cannot be changed after publication.
 
 ## 1.0.0 - 2026-07-12
 

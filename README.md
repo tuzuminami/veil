@@ -136,6 +136,10 @@ also includes the CycloneDX SBOM and GitHub records the SHA-256 digest for each
 asset. For development from a repository checkout, use `pnpm run migrate`
 instead.
 
+Release immutability is enabled for future VEIL releases: published assets and
+their tags cannot be changed. Consumers should still verify the GitHub release
+attestation and asset digest before production use.
+
 ## Policy Example
 
 [examples/ai-agent-policy.json](./examples/ai-agent-policy.json) blocks restricted data, blocks actions over a cost ceiling, requires confirmation for tool calls, and allows known model calls. Create, publish, and bind it before evaluating requests.

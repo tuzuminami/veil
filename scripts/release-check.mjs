@@ -76,6 +76,7 @@ check(releaseArtifactWorkflow.includes("pnpm run check:published-release-artifac
 check(releaseArtifactWorkflow.includes("VEIL_RELEASE_TAG") && releaseArtifactWorkflow.includes("VEIL_RELEASE_ASSETS_JSON"), "release artifact workflow must bind the event tag and assets");
 check(releaseRunbook.includes("pnpm pack --pack-destination .release"), "release runbook must generate the upload tarball from the release commit");
 check(releaseRunbook.includes("gh release create") && releaseRunbook.includes(".release/tuzuminami-veil-$version.tgz"), "release runbook must attach the generated package tarball");
+check(releaseRunbook.includes("immutable-releases --jq '.enabled'") && releaseRunbook.includes("--draft") && releaseRunbook.includes("--draft=false"), "release runbook must verify immutability and publish a fully populated draft");
 check(readme.includes(releaseArtifactUrl), `README must document the verified release artifact ${releaseArtifactUrl}`);
 check(!readme.includes("install `@tuzuminami/veil`"), "README must not claim that VEIL is published to the npm registry");
 check(workflow.includes("anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610"), "CI must use the pinned SBOM action");

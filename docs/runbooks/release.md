@@ -8,9 +8,12 @@ pnpm run audit
 pnpm run verify
 pnpm pack --dry-run
 gh api repos/tuzuminami/veil/license --jq '.license.spdx_id'
+gh api repos/tuzuminami/veil/immutable-releases --jq '.enabled'
 ```
 
-The license result must be `Apache-2.0`. The CI workflow must pass on the exact release commit and produce a CycloneDX SBOM artifact.
+The license result must be `Apache-2.0` and the immutable-release result must
+be `true`. The CI workflow must pass on the exact release commit and produce a
+CycloneDX SBOM artifact.
 
 ## Release Review
 
@@ -32,10 +35,15 @@ gh release create "v$version" \
   ".release/tuzuminami-veil-$version.tgz" \
   .release/veil-sbom.cdx.json \
   --target "$(git rev-parse HEAD)" \
-  --title "VEIL v$version"
+  --title "VEIL v$version" \
+  --draft
+gh release edit "v$version" --draft=false
 ```
 
-The `Release Artifact Verification` workflow runs after publication. It checks
+Attach every asset while the release is a draft, then publish it once. The
+repository has immutable releases enabled, so published assets and their tag
+cannot be changed. The `Release Artifact Verification` workflow runs after
+publication. It checks
 that the tagged source package and uploaded tarball have identical files and
 SHA-256 content digests, then installs that downloaded tarball and executes the
 migration CLI guard. A failure means publish a corrected patch release; never
