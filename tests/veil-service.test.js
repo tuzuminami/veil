@@ -49,6 +49,7 @@ test("primary flow publishes immutable policy and creates auditable decisions", 
 
     const evidence = await service.getDecision(context, allowed.id);
     assert.equal(evidence.policyId, "policy-main");
+    assert.match(evidence.receipt.requestId, /^id-/);
     assert.equal(evidence.correlationId, "corr-test");
 
     const raw = await readFile(fixture.path, "utf8");
@@ -707,7 +708,7 @@ function ctx(tenantId, scopes) {
   const trustedScopes = scopes.includes("decision:write") && !scopes.includes("decision:context:assert")
     ? [...scopes, "decision:context:assert"]
     : scopes;
-  return { tenantId, actorId: "tester", scopes: trustedScopes, correlationId: "corr-test" };
+  return { tenantId, actorId: "tester", scopes: trustedScopes, requestId: "server-request-test", correlationId: "corr-test" };
 }
 
 async function createFixture(enforcementTokenSigner) {

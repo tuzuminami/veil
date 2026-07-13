@@ -13,6 +13,7 @@ test("PostgreSQL persists one atomic receipt for concurrent idempotent decisions
   try {
     await pool.query(await readFile("migrations/001_init.sql", "utf8"));
     await pool.query(await readFile("migrations/002_v1.sql", "utf8"));
+    await pool.query(await readFile("migrations/003_request_identity.sql", "utf8"));
     await pool.query("TRUNCATE active_policy_bindings, appeals, outbox_events, audit_events, decisions, idempotency_records, policy_versions CASCADE");
 
     const store = new PostgresVeilStore(pool);
@@ -22,6 +23,7 @@ test("PostgreSQL persists one atomic receipt for concurrent idempotent decisions
       tenantId: "urn:tenant:integration",
       actorId: "integration-test",
       scopes: ["policy:write", "policy:read", "decision:write", "decision:context:assert", "decision:read", "appeal:write"],
+      requestId: "server-request-integration",
       correlationId: "integration-correlation"
     };
     const bundle = {

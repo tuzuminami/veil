@@ -414,8 +414,10 @@ components:
       properties:
         requestId:
           type: string
+          description: Server-generated request identity. The server returns it in the X-Request-ID response header and never accepts a caller value as this identity.
         correlationId:
           type: string
+          description: Optional caller correlation identity, recorded separately from the trusted server request identity.
         apiVersion:
           const: v1
     ErrorEnvelope:
@@ -753,6 +755,9 @@ components:
           type: string
         evidenceHash:
           type: string
+        requestId:
+          type: string
+          description: Trusted server-generated request identity when the decision was created through the HTTP boundary.
         correlationId:
           type: string
         createdAt:
@@ -796,6 +801,9 @@ components:
           type: string
         evidenceHash:
           type: string
+        requestId:
+          type: string
+          description: Trusted server-generated request identity for new receipts. Historic receipts may omit this field.
         correlationId:
           type: string
         createdAt:
@@ -819,6 +827,9 @@ components:
           type: string
         resourceId:
           type: string
+        requestId:
+          type: string
+          description: Trusted server-generated request identity when available.
         correlationId:
           type: string
         reason:
