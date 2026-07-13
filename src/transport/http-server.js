@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { FileVeilStore } from "../adapters/file-store.js";
-import { VeilService } from "../application/veil-service.js";
+import { VeilService, computeDecisionInputHash } from "../application/veil-service.js";
 import { VeilError } from "../core/errors.js";
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
@@ -19,9 +19,12 @@ export function buildServer(options = {}) {
     if (resolved.authenticator === undefined || resolved.authenticator[DEVELOPMENT_AUTHENTICATOR] === true) {
       throw new Error("VEIL production runtime requires a production auth adapter; development auth is disabled.");
     }
+    if (resolved.enforcementTokenSigner === undefined) {
+      throw new Error("VEIL production runtime requires an enforcement token signer.");
+    }
   }
   const store = resolved.store ?? new FileVeilStore(resolved.storePath ?? ".local-data/veil-store.json");
-  const service = resolved.service ?? new VeilService(store, resolved.clock, resolved.newId);
+  const service = resolved.service ?? new VeilService(store, resolved.clock, resolved.newId, resolved.enforcementTokenSigner);
   const authenticator = resolved.authenticator ?? createDevelopmentAuthenticator();
 
   const server = createServer(async (request, response) => {
@@ -54,6 +57,10 @@ export function createDevelopmentAuthenticator() {
 
 async function route(runtime, request, response) {
   const url = new URL(request.url ?? "/", "http://localhost");
+  if (request.method === "GET" && url.pathname === "/.well-known/jwks.json") {
+    if (runtime.options.enforcementTokenSigner === undefined) throw new VeilError("RESOURCE_NOT_FOUND", "Signing keys are not configured.", 404);
+    return writeJson(response, 200, runtime.options.enforcementTokenSigner.jwks(), { "cache-control": "public, max-age=300" });
+  }
   if (request.method === "GET" && url.pathname === "/health") {
     return writeJson(response, 200, { data: { status: "ok" }, meta: meta(request) });
   }
@@ -100,7 +107,8 @@ async function route(runtime, request, response) {
             action: decision.action,
             reasonCodes: decision.reasonCodes,
             obligations: decision.obligations,
-            receipt: decision.receipt
+            receipt: decision.receipt,
+            ...(decision.enforcementToken === undefined ? {} : { enforcementToken: decision.enforcementToken })
           }
         }
       },
@@ -168,7 +176,7 @@ async function authenticate(authenticator, request) {
   return { ...authenticated, correlationId: correlationId(request) };
 }
 
-function authZenDecisionRequest(body, configuredPolicyId) {
+export function authZenDecisionRequest(body, configuredPolicyId) {
   const subject = authZenEntity(body.subject, "subject");
   const action = authZenAction(body.action);
   const resource = authZenEntity(body.resource, "resource");
@@ -203,6 +211,10 @@ function authZenDecisionRequest(body, configuredPolicyId) {
     },
     input: { subject, action, resource, context: authZenContext }
   };
+}
+
+export function computeAuthZenInputHash(body, configuredPolicyId) {
+  return computeDecisionInputHash(authZenDecisionRequest(body, configuredPolicyId));
 }
 
 function authZenEntity(value, name) {
