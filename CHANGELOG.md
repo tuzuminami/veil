@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Aligned the default VEIL enforcement-token audience with RELAY v1 (`relay-api`) and added a pinned VEIL-to-RELAY signer/verifier compatibility gate. Deployments that override the audience must configure the same value on both services before rollout.
+
 ## 1.0.0 - 2026-07-12
 
 - Focused VEIL on fail-closed AI agent model and tool pre-execution decisions.

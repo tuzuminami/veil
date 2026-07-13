@@ -49,6 +49,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Checkout RELAY compatibility consumer
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: tuzuminami/relay
+          ref: d09ed5f1cff0e0725ce5f5ec074f4dc7c366a01b # RELAY v1.0.0
+          path: .compat/relay
+
+      - name: Install RELAY compatibility dependencies
+        working-directory: .compat/relay
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify VEIL to RELAY enforcement compatibility
+        env:
+          RELAY_SOURCE_DIR: ${{ github.workspace }}/.compat/relay
+        run: pnpm run check:relay-enforcement
+
       - name: Audit production dependencies
         run: pnpm run audit
 

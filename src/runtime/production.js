@@ -1,6 +1,6 @@
 import { PostgresVeilStore } from "../adapters/postgres-store.js";
 import { createOidcAuthenticator } from "../auth/oidc-auth.js";
-import { createEnforcementTokenSigner } from "../core/enforcement-token.js";
+import { createEnforcementTokenSigner, RELAY_ENFORCEMENT_AUDIENCE } from "../core/enforcement-token.js";
 import { buildServer } from "../transport/http-server.js";
 
 export function createProductionServer({ env = process.env, pool, verifier } = {}) {
@@ -13,7 +13,7 @@ export function createProductionServer({ env = process.env, pool, verifier } = {
     privateKeyPem: required(env.VEIL_ENFORCEMENT_PRIVATE_KEY, "VEIL_ENFORCEMENT_PRIVATE_KEY").replace(/\\n/g, "\n"),
     keyId: required(env.VEIL_ENFORCEMENT_KEY_ID, "VEIL_ENFORCEMENT_KEY_ID"),
     issuer: required(env.VEIL_ENFORCEMENT_ISSUER, "VEIL_ENFORCEMENT_ISSUER"),
-    audience: env.VEIL_ENFORCEMENT_AUDIENCE ?? "relay",
+    audience: env.VEIL_ENFORCEMENT_AUDIENCE ?? RELAY_ENFORCEMENT_AUDIENCE,
     ttlSeconds: positiveInteger(env.VEIL_ENFORCEMENT_TTL_SECONDS, 60),
     previousPublicJwks: jsonArray(env.VEIL_ENFORCEMENT_PREVIOUS_PUBLIC_JWKS)
   });

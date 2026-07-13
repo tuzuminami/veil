@@ -106,6 +106,7 @@ VEIL_AUTHZEN_POLICY_ID='agent-baseline' \
 VEIL_ENFORCEMENT_PRIVATE_KEY="$VEIL_ENFORCEMENT_PRIVATE_KEY" \
 VEIL_ENFORCEMENT_KEY_ID='veil-2026-01' \
 VEIL_ENFORCEMENT_ISSUER='https://veil.example.com' \
+VEIL_ENFORCEMENT_AUDIENCE='relay-api' \
 node src/server.js
 ```
 
@@ -113,7 +114,7 @@ The verified JWT `tenant_id` claim is authoritative. `X-Tenant-Id` is optional r
 
 ## RELAY Enforcement Tokens
 
-Production VEIL signs only typed `ALLOW` decisions as compact Ed25519 JWS tokens. The token binds `iss`, `aud`, `tenant_id`, `action`, `requested_action`, `decision_id`, `jti`, `input_hash`, `policy_hash`, `receipt_hash`, `iat`, and `exp`; its lifetime is 60 seconds by default and can be reduced with `VEIL_ENFORCEMENT_TTL_SECONDS` (maximum 300 seconds). RELAY and other PEPs must fetch `/.well-known/jwks.json`, select the public key by `kid`, verify `EdDSA`, issuer, audience, expiry, tenant, action, requested action, and request input hash before I/O. On an unknown key, refresh the JWK Set once; any verification failure is a fail-closed denial. Rotate by publishing a new deployment with the new key and retaining the previous public key until all outstanding tokens have expired.
+Production VEIL signs only typed `ALLOW` decisions as compact Ed25519 JWS tokens. The token binds `iss`, `aud`, `tenant_id`, `action`, `requested_action`, `decision_id`, `jti`, `input_hash`, `policy_hash`, `receipt_hash`, `iat`, and `exp`; its lifetime is 60 seconds by default and can be reduced with `VEIL_ENFORCEMENT_TTL_SECONDS` (maximum 300 seconds). The v1 RELAY contract uses `relay-api` as the default audience; when a deployment overrides it, configure the same exact value as `RELAY_VEIL_AUDIENCE` before rolling out either side. RELAY and other PEPs must fetch `/.well-known/jwks.json`, select the public key by `kid`, verify `EdDSA`, issuer, audience, expiry, tenant, action, requested action, and request input hash before I/O. On an unknown key, refresh the JWK Set once; any verification failure is a fail-closed denial. Rotate by publishing a new deployment with the new key and retaining the previous public key until all outstanding tokens have expired.
 
 `input_hash` uses the public `veil-input-hash/1` contract: `computeDecisionInputHash(decisionRequest)` canonicalizes the exact VEIL decision request (including typed agent/resource/model fields when present) and returns lowercase SHA-256 hex. A PEP must retain the decision request it sent to VEIL and recompute this value before provider I/O; never hash an unrelated transport body.
 

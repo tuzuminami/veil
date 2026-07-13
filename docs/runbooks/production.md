@@ -31,7 +31,7 @@ Optional configuration:
 - `VEIL_PG_CONNECT_TIMEOUT_MS` defaults to `5000`.
 - `VEIL_PG_IDLE_TIMEOUT_MS` defaults to `30000`.
 - `VEIL_PG_SSL=require` enables certificate-verifying PostgreSQL TLS.
-- `VEIL_ENFORCEMENT_AUDIENCE` defaults to `relay`.
+- `VEIL_ENFORCEMENT_AUDIENCE` defaults to `relay-api`, the v1 RELAY audience. If it is overridden, configure the identical value as `RELAY_VEIL_AUDIENCE` before deploying either side; a mismatch is a fail-closed 403 at RELAY.
 - `VEIL_ENFORCEMENT_TTL_SECONDS` defaults to `60` and must not exceed `300`.
 - `VEIL_ENFORCEMENT_PREVIOUS_PUBLIC_JWKS` is an optional JSON array of previous Ed25519 public JWKs retained during key rotation.
 
