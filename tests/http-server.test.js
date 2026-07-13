@@ -3,10 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import { generateKeyPairSync } from "node:crypto";
+import { decodeJwt } from "jose";
 import test from "node:test";
 import { FileVeilStore } from "../src/adapters/file-store.js";
 import { VeilService } from "../src/application/veil-service.js";
-import { buildServer, createDevelopmentAuthenticator } from "../src/transport/http-server.js";
+import { buildServer, computeAuthZenInputHash, createDevelopmentAuthenticator } from "../src/transport/http-server.js";
+import { createEnforcementTokenSigner } from "../src/core/enforcement-token.js";
 
 const policy = {
   name: "agent-baseline",
@@ -36,6 +39,58 @@ test("development auth preserves colon-delimited scope names", async () => {
     tenantId: "tenant-a"
   });
   assert.deepEqual(context.scopes, ["decision:write", "decision:context:assert"]);
+});
+
+test("publishes the configured EdDSA enforcement JWKS without exposing the private key", async () => {
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const { publicKey: previousPublicKey } = generateKeyPairSync("ed25519");
+  const signer = createEnforcementTokenSigner({
+    privateKeyPem: privateKey.export({ format: "pem", type: "pkcs8" }),
+    keyId: "veil-jwks-test",
+    issuer: "https://veil.example.test",
+    previousPublicJwks: [{ ...previousPublicKey.export({ format: "jwk" }), kid: "veil-jwks-previous" }]
+  });
+  const server = buildServer({ store: {}, service: {}, enforcementTokenSigner: signer });
+  const response = await dispatch(server, { method: "GET", url: "/.well-known/jwks.json", headers: {}, body: undefined });
+  const payload = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.keys[0].kid, "veil-jwks-test");
+  assert.equal(payload.keys[0].alg, "EdDSA");
+  assert.equal(payload.keys[0].d, undefined);
+  assert.equal(payload.keys[1].kid, "veil-jwks-previous");
+  assert.equal(payload.keys[1].d, undefined);
+  assert.match(response.headers["cache-control"], /max-age=300/);
+});
+
+test("AuthZEN returns an enforcement token only for an ALLOW decision", async () => {
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const signer = createEnforcementTokenSigner({
+    privateKeyPem: privateKey.export({ format: "pem", type: "pkcs8" }),
+    keyId: "veil-authzen-test",
+    issuer: "https://veil.example.test"
+  });
+  const fixture = await createFixture(signer);
+  try {
+    const request = {
+      subject: { type: "agent", id: "agent-1" },
+      action: { name: "model_call" },
+      resource: { type: "dataset", id: "public-docs", properties: { classification: "public" } },
+      context: { model: { provider: "openai", id: "gpt" }, estimatedCost: 0.1 }
+    };
+    const response = await dispatch(fixture.server, {
+      method: "POST",
+      url: "/access/v1/evaluation",
+      headers: headers(),
+      body: JSON.stringify(request)
+    });
+    const payload = JSON.parse(response.body);
+    assert.equal(response.status, 200);
+    assert.equal(typeof payload.context.veil.enforcementToken, "string");
+    assert.equal(decodeJwt(payload.context.veil.enforcementToken).input_hash, computeAuthZenInputHash(request, "policy-main"));
+  } finally {
+    await fixture.cleanup();
+  }
 });
 
 test("AuthZEN single evaluation returns a boolean decision, receipt, and echoed request ID", async () => {
@@ -133,10 +188,10 @@ test("request identifiers are bounded without echoing oversized values", async (
   }
 });
 
-async function createFixture() {
+async function createFixture(enforcementTokenSigner) {
   const dir = await mkdtemp(join(tmpdir(), "veil-http-test-"));
   const store = new FileVeilStore(join(dir, "store.json"));
-  const service = new VeilService(store, { now: () => new Date("2026-07-11T00:00:00.000Z") }, deterministicId());
+  const service = new VeilService(store, { now: () => new Date("2026-07-11T00:00:00.000Z") }, deterministicId(), enforcementTokenSigner);
   const context = { tenantId: "tenant-a", actorId: "admin", scopes: ["policy:write", "decision:write", "decision:context:assert"], correlationId: "setup" };
   await service.createDraft(context, "policy-main", policy);
   await service.publish(context, "policy-main", "1.0.0", "publish-1");

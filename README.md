@@ -60,6 +60,7 @@ VEIL is a fail-closed policy decision point for AI agent model calls and tool ex
 - Rules for agent, tool/resource, data classification, model, attributes, and numeric cost ceilings.
 - OpenID AuthZEN Authorization API 1.0-compatible JSON single-evaluation endpoint.
 - OIDC/JWT verification with remote JWKS, issuer, audience, algorithm, tenant, and scope checks.
+- Short-lived Ed25519 enforcement tokens for `ALLOW` decisions, with public-key rotation through `/.well-known/jwks.json`.
 - PostgreSQL persistence with tenant-scoped queries and atomic decision, receipt, audit, outbox, and idempotency writes.
 - OpenAPI 3.1, JSON Schemas, JavaScript SDK, package install smoke tests, dependency audit, and release SBOM.
 
@@ -102,10 +103,21 @@ VEIL_OIDC_ISSUER='https://identity.example.com/' \
 VEIL_OIDC_AUDIENCE='veil-api' \
 VEIL_OIDC_JWKS_URL='https://identity.example.com/.well-known/jwks.json' \
 VEIL_AUTHZEN_POLICY_ID='agent-baseline' \
+VEIL_ENFORCEMENT_PRIVATE_KEY="$VEIL_ENFORCEMENT_PRIVATE_KEY" \
+VEIL_ENFORCEMENT_KEY_ID='veil-2026-01' \
+VEIL_ENFORCEMENT_ISSUER='https://veil.example.com' \
 node src/server.js
 ```
 
 The verified JWT `tenant_id` claim is authoritative. `X-Tenant-Id` is optional requested context and is rejected when it conflicts with the verified claim. See [production operations](./docs/runbooks/production.md) for all settings, TLS, migration, backup, and rollback guidance.
+
+## RELAY Enforcement Tokens
+
+Production VEIL signs only `ALLOW` decisions as compact Ed25519 JWS tokens. The token binds `iss`, `aud`, `tenant_id`, `action`, `decision_id`, `jti`, `input_hash`, `policy_hash`, `receipt_hash`, `iat`, and `exp`; its lifetime is 60 seconds by default and can be reduced with `VEIL_ENFORCEMENT_TTL_SECONDS` (maximum 300 seconds). RELAY and other PEPs must fetch `/.well-known/jwks.json`, select the public key by `kid`, verify `EdDSA`, issuer, audience, expiry, tenant, action, and request input hash before I/O. On an unknown key, refresh the JWK Set once; any verification failure is a fail-closed denial. Rotate by publishing a new deployment with the new key and retaining the previous public key until all outstanding tokens have expired.
+
+`input_hash` uses the public `veil-input-hash/1` contract: `computeDecisionInputHash(decisionRequest)` canonicalizes the exact VEIL decision request (including typed agent/resource/model fields when present) and returns lowercase SHA-256 hex. A PEP must retain the decision request it sent to VEIL and recompute this value before provider I/O; never hash an unrelated transport body.
+
+An idempotent retry returns the original decision artifact and never reissues a token. If that token has expired, submit a new decision request with a new idempotency key so VEIL can evaluate current policy and issue a new token.
 
 When running migrations from the published package rather than a repository checkout, install `@tuzuminami/veil` and use `DATABASE_URL='postgresql://veil@db/veil' pnpm exec veil-migrate`.
 

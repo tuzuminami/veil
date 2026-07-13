@@ -15,6 +15,9 @@
 - `VEIL_OIDC_AUDIENCE`
 - `VEIL_OIDC_JWKS_URL`
 - `VEIL_AUTHZEN_POLICY_ID`
+- `VEIL_ENFORCEMENT_PRIVATE_KEY` (an Ed25519 PKCS#8 PEM supplied by the secret manager)
+- `VEIL_ENFORCEMENT_KEY_ID`
+- `VEIL_ENFORCEMENT_ISSUER`
 
 Optional configuration:
 
@@ -28,8 +31,13 @@ Optional configuration:
 - `VEIL_PG_CONNECT_TIMEOUT_MS` defaults to `5000`.
 - `VEIL_PG_IDLE_TIMEOUT_MS` defaults to `30000`.
 - `VEIL_PG_SSL=require` enables certificate-verifying PostgreSQL TLS.
+- `VEIL_ENFORCEMENT_AUDIENCE` defaults to `relay`.
+- `VEIL_ENFORCEMENT_TTL_SECONDS` defaults to `60` and must not exceed `300`.
+- `VEIL_ENFORCEMENT_PREVIOUS_PUBLIC_JWKS` is an optional JSON array of previous Ed25519 public JWKs retained during key rotation.
 
 Do not put secrets in policy bundles, command history, or repository files. Supply `DATABASE_URL` through the deployment secret manager.
+
+The enforcement private key must also come from the deployment secret manager. Publish the previous public JWK alongside the new key before switching signers, retain it for at least the token TTL plus the five-minute JWKS cache window, then retire it. Consumers fetch `/.well-known/jwks.json` without bearer authentication and must retry a single JWKS refresh after an unknown `kid`.
 
 Only trusted policy-enforcement points may receive both `decision:write` and `decision:context:assert`. The latter authorizes the caller to assert agent, resource classification, model, attributes, and estimated cost on behalf of the workload. Do not grant it directly to untrusted agents or end users.
 

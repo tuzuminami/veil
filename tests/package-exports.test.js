@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 
 test("package exports expose public entry points", async () => {
   const root = await import("@tuzuminami/veil");
@@ -63,7 +64,14 @@ test("public server builder rejects development persistence and auth in producti
     assert.throws(() => root.buildServer({ store: new root.FileVeilStore(".local-data/test.json"), authenticator: productionAuth }), /file persistence is disabled/);
     assert.throws(() => root.buildServer({ store: productionStore, authenticator: root.createDevelopmentAuthenticator() }), /production auth adapter/);
     assert.throws(() => root.buildServer({ store: productionStore, service: new root.VeilService(new root.FileVeilStore(".local-data/injected.json")), authenticator: productionAuth }), /custom service injection is disabled/);
-    const server = root.buildServer({ store: productionStore, authenticator: productionAuth });
+    assert.throws(() => root.buildServer({ store: productionStore, authenticator: productionAuth }), /enforcement token signer/);
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const enforcementTokenSigner = root.createEnforcementTokenSigner({
+      privateKeyPem: privateKey.export({ format: "pem", type: "pkcs8" }),
+      keyId: "test-key",
+      issuer: "https://veil.example.test"
+    });
+    const server = root.buildServer({ store: productionStore, authenticator: productionAuth, enforcementTokenSigner });
     server.close();
   } finally {
     if (previous === undefined) {

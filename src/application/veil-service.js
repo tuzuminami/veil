@@ -6,10 +6,11 @@ import { createDecisionReceipt } from "../core/receipt.js";
 import { assertDecisionRequestSchema, assertPolicyBundleSchema } from "../validation/schemas.js";
 
 export class VeilService {
-  constructor(store, clock = { now: () => new Date() }, newId = randomUUID) {
+  constructor(store, clock = { now: () => new Date() }, newId = randomUUID, enforcementTokenSigner) {
     this.store = store;
     this.clock = clock;
     this.newId = newId;
+    this.enforcementTokenSigner = enforcementTokenSigner;
   }
 
   async createDraft(context, policyId, bundle) {
@@ -70,7 +71,7 @@ export class VeilService {
     const idemKey = `decision:${idempotencyKey}`;
     const fingerprint = sha256({ operation: "decision", tenantId: context.tenantId, request });
     const cached = readIdempotency(await this.store.getIdempotency(context.tenantId, idemKey), fingerprint);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) return this.withEnforcementToken(cached);
 
     const policy = await this.getDecisionPolicyOrThrow(context.tenantId, request.policyId, request.version);
     const decisionInput = {
@@ -80,7 +81,7 @@ export class VeilService {
       input: policyInput(request)
     };
     const result = decide(policy, decisionInput);
-    const inputHash = sha256(decisionInput.input);
+    const inputHash = computeDecisionInputHash(request);
     const decision = {
       id: this.newId(),
       tenantId: context.tenantId,
@@ -104,14 +105,15 @@ export class VeilService {
       version: decision.version
     });
     if (typeof this.store.commitDecision === "function") {
-      return this.store.commitDecision({ decision, auditEvent, outboxEvent, idempotencyKey: idemKey, idempotencyRecord });
+      const persisted = await this.store.commitDecision({ decision, auditEvent, outboxEvent, idempotencyKey: idemKey, idempotencyRecord });
+      return this.withEnforcementToken(persisted);
     } else {
       await this.store.saveDecision(decision);
       await this.store.setIdempotency(context.tenantId, idemKey, idempotencyRecord);
       await this.store.appendAudit(auditEvent);
       if (typeof this.store.appendOutbox === "function") await this.store.appendOutbox(outboxEvent);
     }
-    return decision;
+    return this.withEnforcementToken(decision);
   }
 
   async bindActivePolicy(context, policyId, version) {
@@ -163,7 +165,7 @@ export class VeilService {
     requireScope(context, "decision:read");
     const decision = await this.store.getDecision(context.tenantId, decisionId);
     if (decision === undefined) throw new VeilError("RESOURCE_NOT_FOUND", "Decision was not found.", 404);
-    return decision.receipt === undefined ? { ...decision, legacy: true } : decision;
+    return decision.receipt === undefined ? { ...decision, legacy: true } : this.withEnforcementToken(decision);
   }
 
   async listAuditEvents(context, { limit = 50, cursor } = {}) {
@@ -266,6 +268,20 @@ export class VeilService {
       occurredAt: this.clock.now().toISOString()
     };
   }
+
+  async withEnforcementToken(decision) {
+    if (decision.action !== "ALLOW" || this.enforcementTokenSigner === undefined || decision.receipt === undefined) return decision;
+    return {
+      ...decision,
+      enforcementToken: await this.enforcementTokenSigner.issue(decision, decision.receipt.policyHash, new Date(decision.createdAt))
+    };
+  }
+}
+
+export const ENFORCEMENT_INPUT_HASH_VERSION = "veil-input-hash/1";
+
+export function computeDecisionInputHash(request) {
+  return sha256(policyInput(request));
 }
 
 function policyInput(request) {

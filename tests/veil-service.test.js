@@ -4,10 +4,13 @@ import { lstat, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import { generateKeyPairSync } from "node:crypto";
+import { importJWK, jwtVerify } from "jose";
 import { FileVeilStore } from "../src/adapters/file-store.js";
-import { VeilService } from "../src/application/veil-service.js";
+import { VeilService, computeDecisionInputHash, ENFORCEMENT_INPUT_HASH_VERSION } from "../src/application/veil-service.js";
 import { VeilError } from "../src/core/errors.js";
 import { verifyDecisionReceipt } from "../src/core/receipt.js";
+import { createEnforcementTokenSigner } from "../src/core/enforcement-token.js";
 import { buildServer } from "../src/transport/http-server.js";
 
 const bundle = {
@@ -532,6 +535,48 @@ test("decision receipts are deterministic and detect tampering", async () => {
   }
 });
 
+test("ALLOW decisions issue verifiable short-lived EdDSA enforcement tokens while blocked decisions do not", async () => {
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const signer = createEnforcementTokenSigner({
+    privateKeyPem: privateKey.export({ format: "pem", type: "pkcs8" }),
+    keyId: "veil-test-2026-01",
+    issuer: "https://veil.example.test",
+    audience: "relay",
+    ttlSeconds: 60
+  });
+  const fixture = await createFixture(signer);
+  try {
+    const context = ctx("tenant-a", ["policy:write", "decision:write"]);
+    await fixture.service.createDraft(context, "policy-main", bundle);
+    await fixture.service.publish(context, "policy-main", "1.0.0", "publish-key");
+    const allowed = await fixture.service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { risk: "low" } }, "allow-key");
+    const blocked = await fixture.service.createDecision(context, { policyId: "policy-main", version: "1.0.0", input: { message: "secret" } }, "block-key");
+    const key = await importJWK(signer.jwks().keys[0], "EdDSA");
+    const verified = await jwtVerify(allowed.enforcementToken, key, {
+      issuer: "https://veil.example.test",
+      audience: "relay",
+      algorithms: ["EdDSA"],
+      currentDate: new Date("2026-01-01T00:00:30.000Z")
+    });
+
+    assert.equal(verified.protectedHeader.kid, "veil-test-2026-01");
+    assert.equal(verified.payload.tenant_id, "tenant-a");
+    assert.equal(verified.payload.action, "ALLOW");
+    assert.equal(verified.payload.decision_id, allowed.id);
+    assert.equal(verified.payload.input_hash, allowed.inputHash);
+    assert.equal(verified.payload.policy_hash, allowed.receipt.policyHash);
+    assert.equal(verified.payload.receipt_hash, allowed.receipt.receiptHash);
+    assert.equal(verified.payload.jti, allowed.id);
+    assert.equal(ENFORCEMENT_INPUT_HASH_VERSION, "veil-input-hash/1");
+    assert.equal(computeDecisionInputHash({ policyId: "policy-main", version: "1.0.0", input: { risk: "low" } }), allowed.inputHash);
+    assert.equal(blocked.enforcementToken, undefined);
+    const persisted = await readFile(fixture.path, "utf8");
+    assert.doesNotMatch(persisted, /eyJ[A-Za-z0-9_-]+\./);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("active policy bindings resolve omitted versions and support rollback", async () => {
   const fixture = await createFixture();
   try {
@@ -664,14 +709,14 @@ function ctx(tenantId, scopes) {
   return { tenantId, actorId: "tester", scopes: trustedScopes, correlationId: "corr-test" };
 }
 
-async function createFixture() {
+async function createFixture(enforcementTokenSigner) {
   const dir = await mkdtemp(join(tmpdir(), "veil-test-"));
   const path = join(dir, "store.json");
   return {
     path,
     store: new FileVeilStore(path),
     get service() {
-      return this._service ??= new VeilService(this.store, { now: () => new Date("2026-01-01T00:00:00.000Z") }, deterministicId());
+      return this._service ??= new VeilService(this.store, { now: () => new Date("2026-01-01T00:00:00.000Z") }, deterministicId(), enforcementTokenSigner);
     },
     cleanup: async () => rm(dir, { recursive: true, force: true })
   };

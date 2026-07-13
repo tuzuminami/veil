@@ -11,6 +11,33 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /.well-known/jwks.json:
+    get:
+      security: []
+      summary: Retrieve VEIL enforcement-token verification keys.
+      responses:
+        "200":
+          description: Active Ed25519 public keys. Consumers select by `kid` and refresh before or after an unknown-key rejection.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      required: [kty, crv, x, kid, use, alg]
+                      properties:
+                        kty: { const: OKP }
+                        crv: { const: Ed25519 }
+                        x: { type: string }
+                        kid: { type: string }
+                        use: { const: sig }
+                        alg: { const: EdDSA }
+        "404":
+          description: Enforcement-token signing is not configured.
   /health:
     get:
       security: []
@@ -692,6 +719,9 @@ components:
               const: false
             receipt:
               $ref: "#/components/schemas/DecisionReceipt"
+            enforcementToken:
+              type: string
+              description: Short-lived Ed25519 JWS present only when the decision action is ALLOW and enforcement signing is configured.
     DecisionBase:
       type: object
       required: [id, tenantId, policyId, version, action, reasonCodes, obligations, inputHash, evidenceHash, correlationId, createdAt]
@@ -730,6 +760,8 @@ components:
           type: boolean
         receipt:
           $ref: "#/components/schemas/DecisionReceipt"
+        enforcementToken:
+          type: string
     DecisionReceipt:
       type: object
       required: [receiptVersion, decisionId, tenantId, policyId, policyVersion, policyHash, action, reasonCodes, obligations, inputHash, evidenceHash, correlationId, createdAt, receiptHash]
