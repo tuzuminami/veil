@@ -71,6 +71,9 @@ jobs:
       - name: Verify
         run: pnpm run verify
 
+      - name: Verify release artifact declaration
+        run: pnpm run check:release-artifact
+
       - name: Validate package contents
         run: pnpm pack --dry-run
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: VEIL API
-  version: 1.0.0
+  version: 1.0.1
   description: Fail-closed policy decisions for AI agent model and tool execution.
   license:
     name: Apache-2.0

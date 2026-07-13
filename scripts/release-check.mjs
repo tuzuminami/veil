@@ -10,7 +10,9 @@ const changelog = text("CHANGELOG.md");
 const readme = text("README.md");
 const license = text("LICENSE");
 const workflow = text(".github/workflows/ci.yml");
+const releaseArtifactWorkflow = text(".github/workflows/release-artifact.yml");
 const version = packageJson.version;
+const releaseArtifactUrl = `https://github.com/tuzuminami/veil/releases/download/v${version}/${packageJson.name.slice(1).replace("/", "-")}-${version}.tgz`;
 const forwardMigrations = ["migrations/001_init.sql", "migrations/002_v1.sql", "migrations/003_request_identity.sql"];
 
 check(/^\d+\.\d+\.\d+$/.test(version), `package version must be stable semver, got ${version}`);
@@ -59,6 +61,13 @@ check(workflow.includes("pnpm run audit"), "CI must audit production dependencie
 check(workflow.includes("Checkout RELAY compatibility consumer"), "CI must check out the RELAY enforcement consumer");
 check(workflow.includes("89b417a653ff468a7ce5ae0d3965370a998ed3a0"), "CI must pin the RELAY VEIL audience contract by commit SHA");
 check(workflow.includes("pnpm run check:relay-enforcement"), "CI must run the VEIL to RELAY enforcement compatibility check");
+check(packageJson.scripts["check:release-artifact"] === "node scripts/check-release-artifact.mjs", "package must provide the public release artifact check");
+check(packageJson.scripts["check:published-release-artifact"] === "node scripts/check-release-artifact.mjs --published", "package must provide the published release artifact check");
+check(workflow.includes("pnpm run check:release-artifact"), "CI must verify the release artifact declaration");
+check(releaseArtifactWorkflow.includes("types: [published]"), "release artifact workflow must run when a release is published");
+check(releaseArtifactWorkflow.includes("pnpm run check:published-release-artifact"), "release artifact workflow must download and install the published package");
+check(readme.includes(releaseArtifactUrl), `README must document the verified release artifact ${releaseArtifactUrl}`);
+check(!readme.includes("install `@tuzuminami/veil`"), "README must not claim that VEIL is published to the npm registry");
 check(workflow.includes("anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610"), "CI must use the pinned SBOM action");
 check(workflow.includes("format: cyclonedx-json") && workflow.includes("syft-version: v1.46.0"), "CI must generate a pinned CycloneDX SBOM");
 
