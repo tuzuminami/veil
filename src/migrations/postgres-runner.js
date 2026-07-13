@@ -222,7 +222,7 @@ async function legacySchemaState(client) {
         AND parent_namespace.oid = current_schema()::regnamespace
         AND child.relname = 'appeals'
         AND parent.relname = 'decisions'
-        AND pg_catalog.pg_get_constraintdef(con.oid) = 'FOREIGN KEY (tenant_id, decision_id) REFERENCES decisions (tenant_id, decision_id)'
+        AND pg_catalog.pg_get_constraintdef(con.oid) = 'FOREIGN KEY (tenant_id, decision_id) REFERENCES decisions(tenant_id, decision_id)'
     ) AS exists
   `);
   return foreignKey.rows[0].exists ? "complete" : "incomplete";
