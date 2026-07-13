@@ -91,11 +91,10 @@ The development runtime is disabled when `NODE_ENV=production`.
 
 ## Production Runtime
 
-Apply both migrations and configure PostgreSQL plus an OIDC issuer:
+Run the checksummed migration runner, then configure PostgreSQL plus an OIDC issuer:
 
 ```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/001_init.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/002_v1.sql
+DATABASE_URL='postgresql://veil@db/veil' pnpm run migrate
 
 NODE_ENV=production \
 DATABASE_URL='postgresql://veil@db/veil' \
@@ -107,6 +106,8 @@ node src/server.js
 ```
 
 The verified JWT `tenant_id` claim is authoritative. `X-Tenant-Id` is optional requested context and is rejected when it conflicts with the verified claim. See [production operations](./docs/runbooks/production.md) for all settings, TLS, migration, backup, and rollback guidance.
+
+When running migrations from the published package rather than a repository checkout, install `@tuzuminami/veil` and use `DATABASE_URL='postgresql://veil@db/veil' pnpm exec veil-migrate`.
 
 ## Policy Example
 
@@ -188,7 +189,7 @@ import {
 } from "@tuzuminami/veil";
 ```
 
-The JavaScript client is exported from `@tuzuminami/veil/sdk`. OIDC and PostgreSQL adapters are also available as `@tuzuminami/veil/auth` and `@tuzuminami/veil/postgres`.
+The JavaScript client is exported from `@tuzuminami/veil/sdk`. OIDC, PostgreSQL, and migration runner APIs are also available as `@tuzuminami/veil/auth`, `@tuzuminami/veil/postgres`, and `@tuzuminami/veil/migrations`.
 
 ## Security Model
 

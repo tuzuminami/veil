@@ -23,7 +23,7 @@ export VEIL_POSTGRES_PASSWORD='local-only-password'
 docker compose up
 ```
 
-Migrations are in `migrations/001_init.sql` and `migrations/002_v1.sql`. The default local server remains file-backed; the production runtime uses PostgreSQL when its required environment is configured.
+Run `DATABASE_URL="$DATABASE_URL" pnpm run migrate` from a repository checkout, or `DATABASE_URL="$DATABASE_URL" pnpm exec veil-migrate` after installing the published package. The runner serializes each migration with a transaction-scoped PostgreSQL advisory lock, records SHA-256 checksums in `veil_schema_migrations`, and rejects changed or unknown applied migrations. The default local server remains file-backed; the production runtime uses PostgreSQL when its required environment is configured.
 
 ## Common Failure Checks
 

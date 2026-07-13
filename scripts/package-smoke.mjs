@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -19,6 +19,14 @@ try {
     encoding: "utf8",
     stdio: "pipe"
   });
+  const migrationCli = spawnSync("pnpm", ["exec", "veil-migrate"], {
+    cwd: temp,
+    encoding: "utf8",
+    env: { ...process.env, DATABASE_URL: "" }
+  });
+  if (migrationCli.status === 0 || !migrationCli.stderr.includes("DATABASE_URL is required")) {
+    throw new Error("packed migration CLI did not execute its DATABASE_URL guard");
+  }
   console.log(`Package install smoke passed for ${packageJson.name}@${packageJson.version}.`);
 } finally {
   rmSync(temp, { recursive: true, force: true });
@@ -30,9 +38,11 @@ function packageProbe(name) {
     const sdk = await import(${JSON.stringify(`${name}/sdk`)});
     const auth = await import(${JSON.stringify(`${name}/auth`)});
     const postgres = await import(${JSON.stringify(`${name}/postgres`)});
+    const migrations = await import(${JSON.stringify(`${name}/migrations`)});
     if (typeof root.VeilService !== "function") throw new Error("missing VeilService export");
     if (typeof sdk.VeilClient !== "function") throw new Error("missing VeilClient export");
     if (typeof auth.createOidcAuthenticator !== "function") throw new Error("missing OIDC export");
     if (typeof postgres.PostgresVeilStore !== "function") throw new Error("missing Postgres export");
+    if (typeof migrations.runPostgresMigrations !== "function") throw new Error("missing migration runner export");
   `;
 }
