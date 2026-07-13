@@ -522,6 +522,8 @@ components:
           type: string
         version:
           type: string
+        requestedAction:
+          enum: [model_call, tool_call]
         status:
           enum: [draft, published]
         bundle:
