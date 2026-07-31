@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2 - 2026-08-01
+
+- Update the production `fast-uri` transitive dependency to `3.1.4` to remediate
+  GHSA-v2hh-gcrm-f6hx (CVE-2026-16221) before publishing the next immutable release artifact.
+
 ## 1.0.1 - 2026-07-13
 
 - Aligned the default VEIL enforcement-token audience with RELAY's canonical `relay-api` contract and added a pinned production-signer-to-RELAY-verifier compatibility gate. Documented coordinated audience cutover and rollback because a mixed fleet fails closed.
