@@ -123,15 +123,15 @@ An idempotent retry returns the original decision artifact and never reissues a 
 ## Install From The Verified Release
 
 VEIL is not published to the npm registry. Install the versioned GitHub Release
-artifact instead; this URL is tied to the `v1.0.1` tag and is checked by the
+artifact instead; this URL is tied to the `v1.0.2` tag and is checked by the
 release CI:
 
 ```bash
-pnpm add https://github.com/tuzuminami/veil/releases/download/v1.0.1/tuzuminami-veil-1.0.1.tgz
+pnpm add https://github.com/tuzuminami/veil/releases/download/v1.0.2/tuzuminami-veil-1.0.2.tgz
 DATABASE_URL='postgresql://veil@db/veil' pnpm exec veil-migrate
 ```
 
-The [v1.0.1 release](https://github.com/tuzuminami/veil/releases/tag/v1.0.1)
+The [v1.0.2 release](https://github.com/tuzuminami/veil/releases/tag/v1.0.2)
 also includes the CycloneDX SBOM and GitHub records the SHA-256 digest for each
 asset. For development from a repository checkout, use `pnpm run migrate`
 instead.
